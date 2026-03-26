@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marcus Experiment Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <style>
+        :root {
+            --bg: #1a1b26;
+            --surface: #24283b;
+            --surface-hover: #2f3349;
+            --text: #c0caf5;
+            --text-muted: #565f89;
+            --accent: #7aa2f7;
+            --accent-hover: #89b4fa;
+            --green: #9ece6a;
+            --red: #f7768e;
+            --yellow: #e0af68;
+            --orange: #ff9e64;
+            --border: #3b4261;
+            --radius: 8px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            background: var(--bg); color: var(--text); line-height: 1.6;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+        }
+        header h1 { font-size: 1.3rem; color: var(--accent); }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block; margin-right: 6px;
+        }
+        .dot-green { background: var(--green); }
+        .dot-red { background: var(--red); }
+        .dot-yellow { background: var(--yellow); }
+
+        /* Tabs */
+        .tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+        .tab {
+            padding: 8px 16px; background: none; border: none; color: var(--text-muted);
+            cursor: pointer; font-size: 0.85rem; border-bottom: 2px solid transparent;
+            font-family: inherit;
+        }
+        .tab:hover { color: var(--text); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Forms */
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 3px; }
+        input, textarea, select {
+            width: 100%; padding: 8px 10px; background: var(--surface);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-size: 0.85rem; font-family: inherit;
+        }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+        textarea { min-height: 100px; resize: vertical; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px; border: none; border-radius: var(--radius);
+            cursor: pointer; font-size: 0.85rem; font-weight: 500;
+            font-family: inherit; transition: all 0.15s;
+        }
+        .btn-primary { background: var(--accent); color: var(--bg); }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-danger { background: var(--red); color: var(--bg); }
+        .btn-success { background: var(--green); color: var(--bg); }
+        .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+        .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+        .btn-group { display: flex; gap: 8px; margin-top: 12px; }
+
+        /* Runs config */
+        .run-row {
+            display: grid; grid-template-columns: 40px 1fr 100px 80px 40px;
+            gap: 10px; align-items: center; padding: 10px;
+            background: var(--surface); border-radius: var(--radius);
+            margin-bottom: 6px; border: 1px solid var(--border);
+        }
+        .run-num { font-weight: 600; color: var(--accent); text-align: center; }
+        .run-remove { background: none; border: none; color: var(--red); cursor: pointer; font-size: 1.1rem; }
+
+        /* Skills */
+        .skills-container { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+        .skill-tag {
+            padding: 3px 8px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 10px; font-size: 0.7rem; cursor: pointer; user-select: none;
+        }
+        .skill-tag.selected { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+        /* Status badges */
+        .badge {
+            padding: 3px 8px; border-radius: 10px; font-size: 0.7rem;
+            font-weight: 600; text-transform: uppercase; display: inline-block;
+        }
+        .badge-pending { background: var(--text-muted); color: var(--bg); }
+        .badge-running { background: var(--accent); color: var(--bg); }
+        .badge-completed { background: var(--green); color: var(--bg); }
+        .badge-failed { background: var(--red); color: var(--bg); }
+        .badge-stopped { background: var(--orange); color: var(--bg); }
+        .badge-working { background: var(--green); color: var(--bg); }
+        .badge-waiting { background: var(--yellow); color: var(--bg); }
+        .badge-idle { background: var(--text-muted); color: var(--bg); }
+        .badge-error { background: var(--red); color: var(--bg); }
+        .badge-complete { background: var(--green); color: var(--bg); }
+
+        /* Experiment cards */
+        .exp-card {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 16px; margin-bottom: 10px;
+        }
+        .exp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .exp-meta { display: flex; gap: 20px; color: var(--text-muted); font-size: 0.8rem; }
+
+        /* Agent output panels */
+        .agent-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 10px; margin-top: 16px;
+        }
+        .agent-panel {
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: var(--radius); overflow: hidden;
+        }
+        .agent-panel-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border);
+            font-size: 0.8rem;
+        }
+        .agent-panel-header .agent-name { font-weight: 600; }
+        .agent-output {
+            padding: 8px 12px; font-size: 0.75rem; line-height: 1.4;
+            max-height: 300px; overflow-y: auto; white-space: pre-wrap;
+            word-break: break-all; color: var(--text-muted);
+        }
+
+        /* Optimize stats */
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px; margin-top: 12px;
+        }
+        .stat-card {
+            text-align: center; padding: 12px;
+            background: var(--bg); border-radius: var(--radius);
+        }
+        .stat-value { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+        .stat-label { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }
+
+        .empty-state { text-align: center; padding: 40px; color: var(--text-muted); }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 20px; right: 20px; padding: 10px 16px;
+            border-radius: var(--radius); font-size: 0.85rem; z-index: 1000;
+            animation: slideIn 0.2s ease;
+        }
+        .toast-success { background: var(--green); color: var(--bg); }
+        .toast-error { background: var(--red); color: var(--bg); }
+        @keyframes slideIn {
+            from { transform: translateY(16px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* Progress */
+        .progress-bar {
+            height: 4px; background: var(--border); border-radius: 2px;
+            overflow: hidden; margin-top: 8px;
+        }
+        .progress-fill {
+            height: 100%; background: var(--accent); border-radius: 2px;
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>Marcus Experiment Dashboard</h1>
+        <span id="connection-status"><span class="status-dot dot-green"></span>Ready</span>
+    </header>
+
+    <div class="tabs">
+        <button class="tab active" data-tab="new">New Experiment</button>
+        <button class="tab" data-tab="running">Running</button>
+        <button class="tab" data-tab="optimize">Optimize</button>
+        <button class="tab" data-tab="history">History</button>
+    </div>
+
+    <!-- NEW EXPERIMENT -->
+    <div id="tab-new" class="tab-content active">
+        <form id="experiment-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Pipeline Name</label>
+                    <input type="text" id="pipeline-name" placeholder="e.g., snake-game-scaling" value="snake-game" required>
+                </div>
+                <div class="form-group">
+                    <label>Project Name</label>
+                    <input type="text" id="project-name" placeholder="e.g., Snake Game Demo" value="snake-game-v71" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Project Specification / Prompt</label>
+                <textarea id="project-spec" placeholder="Describe what you want to build..." required>A visual appealing simple snake game with basic features</textarea>
+            </div>
+            <div class="form-row-3">
+                <div class="form-group">
+                    <label>Complexity</label>
+                    <select id="complexity">
+                        <option value="prototype" selected>Prototype</option>
+                        <option value="standard">Standard</option>
+                        <option value="enterprise">Enterprise</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Provider</label>
+                    <select id="provider">
+                        <option value="planka" selected>Planka</option>
+                        <option value="github">GitHub</option>
+                        <option value="linear">Linear</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Project Timeout (s)</label>
+                    <input type="number" id="timeout" value="300" min="60">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Default Skills</label>
+                <div class="skills-container" id="skills-container"></div>
+            </div>
+            <div style="margin-top:16px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <label style="margin:0">Pipeline Runs (Sequential)</label>
+                    <button type="button" class="btn btn-secondary btn-sm" id="add-run">+ Add Run</button>
+                </div>
+                <div id="runs-list"></div>
+            </div>
+            <div class="btn-group">
+                <button type="submit" class="btn btn-primary">Create Pipeline</button>
+                <button type="button" class="btn btn-success" id="btn-create-start">Create & Start</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- RUNNING EXPERIMENTS -->
+    <div id="tab-running" class="tab-content">
+        <div id="experiments-list"></div>
+    </div>
+
+    <!-- OPTIMIZE -->
+    <div id="tab-optimize" class="tab-content">
+        <form id="optimize-form">
+            <div class="form-group">
+                <label>Project Specification</label>
+                <textarea id="opt-spec" placeholder="Paste your project spec to estimate optimal agent count..."></textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Complexity</label>
+                    <select id="opt-complexity">
+                        <option value="prototype">Prototype</option>
+                        <option value="standard" selected>Standard</option>
+                        <option value="enterprise">Enterprise</option>
+                    </select>
+                </div>
+                <div class="form-group" style="display:flex;align-items:flex-end">
+                    <button type="submit" class="btn btn-primary" style="width:100%">Estimate Optimal Agents</button>
+                </div>
+            </div>
+        </form>
+        <div id="optimize-result"></div>
+    </div>
+
+    <!-- HISTORY -->
+    <div id="tab-history" class="tab-content">
+        <div id="history-list"></div>
+    </div>
+</div>
+
+<script>
+const ALL_SKILLS = [
+    'python','javascript','typescript','react','fastapi','sqlalchemy',
+    'postgresql','database-design','rest-api','jwt','security','pytest',
+    'integration-testing','docker','redis','graphql','vue','django','flask'
+];
+const DEFAULT_SKILLS = ALL_SKILLS.slice(0, 13);
+let selectedSkills = new Set(DEFAULT_SKILLS);
+let runs = [{num_agents:2,subagents:0}];
+let outputPollers = {};
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        if (tab.dataset.tab === 'running') refreshExperiments();
+        if (tab.dataset.tab === 'history') refreshHistory();
+    });
+});
+
+// Skills
+function renderSkills() {
+    const c = document.getElementById('skills-container');
+    c.innerHTML = ALL_SKILLS.map(s =>
+        `<span class="skill-tag ${selectedSkills.has(s)?'selected':''}" data-skill="${s}">${s}</span>`
+    ).join('');
+    c.querySelectorAll('.skill-tag').forEach(t => {
+        t.addEventListener('click', () => {
+            selectedSkills.has(t.dataset.skill) ? selectedSkills.delete(t.dataset.skill) : selectedSkills.add(t.dataset.skill);
+            renderSkills();
+        });
+    });
+}
+
+// Runs
+function renderRuns() {
+    document.getElementById('runs-list').innerHTML = runs.map((r, i) => `
+        <div class="run-row">
+            <span class="run-num">#${i+1}</span>
+            <div><label style="display:inline;margin-right:6px">Agents:</label>
+                <input type="number" min="1" max="50" value="${r.num_agents}" style="width:70px"
+                       onchange="runs[${i}].num_agents=parseInt(this.value)"></div>
+            <div><label style="display:inline;margin-right:6px">Sub:</label>
+                <input type="number" min="0" max="10" value="${r.subagents}" style="width:50px"
+                       onchange="runs[${i}].subagents=parseInt(this.value)"></div>
+            <span style="color:var(--text-muted);font-size:0.75rem">${r.num_agents+(r.num_agents*r.subagents)} total</span>
+            <button class="run-remove" onclick="runs.length>1&&(runs.splice(${i},1),renderRuns())">&times;</button>
+        </div>`).join('');
+}
+
+document.getElementById('add-run').addEventListener('click', () => {
+    const last = runs[runs.length-1];
+    runs.push({num_agents: last.num_agents*2, subagents: last.subagents});
+    renderRuns();
+});
+
+function buildPayload() {
+    return {
+        name: document.getElementById('pipeline-name').value,
+        project_name: document.getElementById('project-name').value,
+        project_spec: document.getElementById('project-spec').value,
+        complexity: document.getElementById('complexity').value,
+        provider: document.getElementById('provider').value,
+        mode: 'new_project',
+        default_skills: Array.from(selectedSkills),
+        timeout_project_creation: parseInt(document.getElementById('timeout').value),
+        runs: runs.map(r => ({num_agents: r.num_agents, subagents_per_agent: r.subagents})),
+    };
+}
+
+// Create pipeline
+document.getElementById('experiment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await createPipeline(false);
+});
+
+// Create & Start
+document.getElementById('btn-create-start').addEventListener('click', async () => {
+    await createPipeline(true);
+});
+
+async function createPipeline(autoStart) {
+    const payload = buildPayload();
+    try {
+        const resp = await fetch('/api/experiments', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload),
+        });
+        if (!resp.ok) { const e = await resp.json(); showToast(e.detail||'Failed','error'); return; }
+        showToast('Pipeline created!', 'success');
+
+        if (autoStart) {
+            const startResp = await fetch(`/api/experiments/${payload.name}/start`, {method:'POST'});
+            if (startResp.ok) {
+                showToast('Experiment started! Agents spawning...', 'success');
+            } else {
+                const e = await startResp.json();
+                showToast(e.detail||'Failed to start','error');
+            }
+        }
+        document.querySelector('[data-tab="running"]').click();
+    } catch (err) { showToast('Network error: '+err.message, 'error'); }
+}
+
+// Track last known state to avoid flashing on re-render
+let lastExpListHash = '';
+let lastOutputHashes = {};
+
+// Refresh experiments list — only re-render if data changed
+async function refreshExperiments() {
+    try {
+        const resp = await fetch('/api/experiments');
+        const data = await resp.json();
+        const container = document.getElementById('experiments-list');
+        const hash = JSON.stringify(data.map(e => ({n:e.pipeline_name,s:e.status,r:e.current_run})));
+
+        // Only rebuild card structure if experiments changed
+        if (hash !== lastExpListHash) {
+            lastExpListHash = hash;
+
+            if (data.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h3>No experiments</h3><p>Create one to get started.</p></div>';
+                return;
+            }
+
+            let html = '';
+            for (const exp of data) {
+                const completedRuns = exp.runs.filter(r => r.status === 'completed').length;
+                const progress = exp.total_runs > 0 ? (completedRuns / exp.total_runs * 100) : 0;
+                const tmux = exp.runs.find(r => r.tmux_session)?.tmux_session || '';
+
+                html += `<div class="exp-card" id="card-${exp.pipeline_name}">
+                    <div class="exp-header">
+                        <div>
+                            <strong>${exp.pipeline_name}</strong>
+                            <span class="badge badge-${exp.status}" style="margin-left:8px">${exp.status}</span>
+                        </div>
+                        <div class="btn-group" style="margin:0">
+                            ${tmux ? `<button class="btn btn-secondary btn-sm" onclick="copyTmux('${tmux}')">tmux attach</button>` : ''}
+                            ${exp.status === 'running' ? `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>` : ''}
+                            ${exp.status === 'pending' && exp.current_run < 0 ? `<button class="btn btn-success btn-sm" onclick="startExp('${exp.pipeline_name}', 0)">Start</button>` : ''}
+                            ${exp.status === 'pending' && exp.current_run >= 0 && exp.current_run + 1 < exp.total_runs ? `<button class="btn btn-success btn-sm" onclick="startExp('${exp.pipeline_name}', ${exp.current_run + 1})">Start Run ${exp.current_run + 1}</button>` : ''}
+                            ${exp.status === 'running' ? `<button class="btn btn-warning btn-sm" onclick="completeRun('${exp.pipeline_name}', ${exp.current_run})">Complete Run</button>` : ''}
+                            ${exp.status === 'running' ? `<button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>` : ''}
+                        </div>
+                    </div>
+                    <div class="exp-meta">
+                        <span>Runs: ${completedRuns}/${exp.total_runs}</span>
+                        <span>Current: ${exp.current_run >= 0 ? 'Run '+exp.current_run : 'Not started'}</span>
+                        ${exp.runs.map(r => `<span>Run ${r.run_index}: ${r.num_agents} agents <span class="badge badge-${r.status}">${r.status}</span></span>`).join('')}
+                    </div>
+                    ${tmux ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px">tmux attach -t "${tmux}"</div>` : ''}
+                    <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
+                    <div class="agent-grid" id="output-${exp.pipeline_name}"></div>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        // Set up terminal panels for running experiments
+        for (const exp of data) {
+            if (exp.status === 'running') {
+                fetchPanesAndRenderTerminals(exp.pipeline_name);
+            }
+        }
+    } catch (err) { console.error('Refresh failed:', err); }
+}
+
+// Terminal management
+let activeTerminals = {}; // name -> {paneIndex -> {term, ws, fitAddon}}
+
+async function fetchPanesAndRenderTerminals(name) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/output`);
+        if (!resp.ok) return;
+        const panes = await resp.json();
+        const container = document.getElementById('output-' + name);
+        if (!container) return;
+
+        // Only create terminal elements once
+        if (!activeTerminals[name]) {
+            activeTerminals[name] = {};
+            container.innerHTML = panes.map((p, i) => `
+                <div class="agent-panel">
+                    <div class="agent-panel-header">
+                        <span class="agent-name">${p.title || 'Pane '+i}</span>
+                        <span class="badge badge-${p.status}" id="status-${name}-${i}">${p.status}</span>
+                        <button class="btn btn-secondary btn-sm" onclick="connectTerminal('${name}', ${i})" id="conn-btn-${name}-${i}">Connect</button>
+                    </div>
+                    <div id="term-${name}-${i}" style="height:300px;background:#1a1b26"></div>
+                </div>
+            `).join('');
+        } else {
+            // Just update status badges
+            panes.forEach((p, i) => {
+                const badge = document.getElementById(`status-${name}-${i}`);
+                if (badge) {
+                    badge.className = `badge badge-${p.status}`;
+                    badge.textContent = p.status;
+                }
+            });
+        }
+    } catch (err) { /* silent */ }
+}
+
+function connectTerminal(name, paneIndex) {
+    if (activeTerminals[name]?.[paneIndex]?.ws) {
+        // Already connected — disconnect
+        activeTerminals[name][paneIndex].ws.close();
+        activeTerminals[name][paneIndex].term.dispose();
+        delete activeTerminals[name][paneIndex];
+        const btn = document.getElementById(`conn-btn-${name}-${paneIndex}`);
+        if (btn) { btn.textContent = 'Connect'; btn.className = 'btn btn-secondary btn-sm'; }
+        const el = document.getElementById(`term-${name}-${paneIndex}`);
+        if (el) el.innerHTML = '';
+        return;
+    }
+
+    const termEl = document.getElementById(`term-${name}-${paneIndex}`);
+    if (!termEl) return;
+
+    const term = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+        theme: {
+            background: '#1a1b26',
+            foreground: '#c0caf5',
+            cursor: '#c0caf5',
+            selectionBackground: '#33467c',
+        },
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(termEl);
+    fitAddon.fit();
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/api/experiments/${name}/terminal/${paneIndex}`);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+        const btn = document.getElementById(`conn-btn-${name}-${paneIndex}`);
+        if (btn) { btn.textContent = 'Disconnect'; btn.className = 'btn btn-danger btn-sm'; }
+        // Send initial size
+        ws.send(`resize:${term.rows}:${term.cols}`);
+    };
+
+    ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(event.data));
+        } else {
+            term.write(event.data);
+        }
+    };
+
+    ws.onclose = () => {
+        term.write('\r\n\x1b[33m[Disconnected]\x1b[0m\r\n');
+        const btn = document.getElementById(`conn-btn-${name}-${paneIndex}`);
+        if (btn) { btn.textContent = 'Connect'; btn.className = 'btn btn-secondary btn-sm'; }
+    };
+
+    ws.onerror = () => {
+        term.write('\r\n\x1b[31m[Connection error]\x1b[0m\r\n');
+    };
+
+    // Send user input to the WebSocket
+    term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(new TextEncoder().encode(data));
+        }
+    });
+
+    // Handle terminal resize
+    term.onResize(({rows, cols}) => {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(`resize:${rows}:${cols}`);
+        }
+    });
+
+    // Handle browser resize
+    const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+    resizeObserver.observe(termEl);
+
+    if (!activeTerminals[name]) activeTerminals[name] = {};
+    activeTerminals[name][paneIndex] = {term, ws, fitAddon, resizeObserver};
+}
+
+function copyTmux(session) {
+    navigator.clipboard.writeText('tmux attach -t "' + session + '"').then(
+        () => showToast('Copied: tmux attach -t "' + session + '"', 'success'),
+        () => showToast('Run: tmux attach -t "' + session + '"', 'success')
+    );
+}
+
+function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+}
+
+async function startExp(name, runIndex = 0) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/start?run_index=${runIndex}`, {method:'POST'});
+        if (resp.ok) { showToast(`Started run ${runIndex}!`,'success'); refreshExperiments(); }
+        else { const e = await resp.json(); showToast(e.detail,'error'); }
+    } catch (err) { showToast(err.message,'error'); }
+}
+
+async function completeRun(name, runIndex) {
+    if (!confirm(`Mark run ${runIndex} as complete and tear down tmux session?`)) return;
+    try {
+        const resp = await fetch(`/api/experiments/${name}/complete-run?run_index=${runIndex}`, {method:'POST'});
+        if (resp.ok) { showToast(`Run ${runIndex} completed`,'success'); refreshExperiments(); }
+        else { const e = await resp.json(); showToast(e.detail,'error'); }
+    } catch (err) { showToast(err.message,'error'); }
+}
+
+async function stopExp(name) {
+    if (!confirm(`Stop "${name}" and kill all agent tmux sessions?`)) return;
+    try {
+        const resp = await fetch(`/api/experiments/${name}`, {method:'DELETE'});
+        if (resp.ok) { showToast('Stopped','success'); refreshExperiments(); }
+        else { showToast('Failed to stop','error'); }
+    } catch (err) { showToast(err.message,'error'); }
+}
+
+// Optimize
+document.getElementById('optimize-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+        const resp = await fetch('/api/experiments/optimize', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+                project_spec: document.getElementById('opt-spec').value,
+                complexity: document.getElementById('opt-complexity').value,
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showToast(data.detail || 'Optimization failed', 'error');
+            return;
+        }
+        document.getElementById('optimize-result').innerHTML = `
+            <div class="exp-card" style="margin-top:12px">
+                <strong style="color:var(--green)">Optimization Results</strong>
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-value">${data.optimal_agents}</div><div class="stat-label">Optimal Agents</div></div>
+                    <div class="stat-card"><div class="stat-value">${data.max_parallelism}</div><div class="stat-label">Max Parallelism</div></div>
+                    <div class="stat-card"><div class="stat-value">${data.total_tasks}</div><div class="stat-label">Est. Tasks</div></div>
+                    <div class="stat-card"><div class="stat-value">${data.efficiency_gain_percent.toFixed(0)}%</div><div class="stat-label">Efficiency Gain</div></div>
+                </div>
+                <div style="margin-top:12px">
+                    <label>Recommended Runs:</label>
+                    ${data.recommended_runs.map(r => `<span class="skill-tag selected">${r.num_agents} agents</span>`).join(' ')}
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary btn-sm" onclick='useRuns(${JSON.stringify(data.recommended_runs)})'>Use These Runs</button>
+                </div>
+            </div>`;
+    } catch (err) { showToast('Failed: '+err.message,'error'); }
+});
+
+function useRuns(recommended) {
+    runs = recommended.map(r => ({num_agents:r.num_agents, subagents:r.subagents_per_agent||0}));
+    renderRuns();
+    document.querySelector('[data-tab="new"]').click();
+    showToast('Runs updated from optimization','success');
+}
+
+function showToast(msg, type) {
+    const t = document.createElement('div');
+    t.className = `toast toast-${type}`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+}
+
+// Auto-refresh running experiments every 15s (no flashing — only updates changed content)
+setInterval(() => {
+    if (document.querySelector('[data-tab="running"]').classList.contains('active')) {
+        refreshExperiments();
+    }
+}, 15000);
+
+// History
+async function refreshHistory() {
+    try {
+        const resp = await fetch('/api/experiments/history');
+        const data = await resp.json();
+        const container = document.getElementById('history-list');
+
+        if (data.length === 0) {
+            container.innerHTML = '<div class="empty-state"><h3>No past experiments</h3><p>Run an experiment to see results here.</p></div>';
+            return;
+        }
+
+        container.innerHTML = data.map(exp => `
+            <div class="exp-card">
+                <div class="exp-header">
+                    <strong>${exp.experiment_name}</strong>
+                    <span style="color:var(--text-muted);font-size:0.75rem">ID: ${exp.experiment_id}</span>
+                </div>
+                ${exp.runs.length > 0 ? `
+                    <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:0.8rem">
+                        <thead>
+                            <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
+                                <th style="padding:6px">Run</th>
+                                <th style="padding:6px">Agents</th>
+                                <th style="padding:6px">Status</th>
+                                <th style="padding:6px">Time (s)</th>
+                                <th style="padding:6px">Tasks</th>
+                                <th style="padding:6px">Completion</th>
+                                <th style="padding:6px">Blockers</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${exp.runs.map(r => `
+                                <tr style="border-bottom:1px solid var(--border)">
+                                    <td style="padding:6px">${r.run_name || r.run_id.slice(0,8)}</td>
+                                    <td style="padding:6px">${r.params.num_agents || '-'}</td>
+                                    <td style="padding:6px"><span class="badge badge-${r.status === 'FINISHED' ? 'completed' : r.status === 'FAILED' ? 'failed' : 'running'}">${r.status}</span></td>
+                                    <td style="padding:6px">${r.metrics.completion_time_seconds ? r.metrics.completion_time_seconds.toFixed(0) : '-'}</td>
+                                    <td style="padding:6px">${r.metrics.tasks_completed != null ? r.metrics.tasks_completed + '/' + (r.metrics.tasks_total || '?') : '-'}</td>
+                                    <td style="padding:6px">${r.metrics.completion_rate != null ? (r.metrics.completion_rate * 100).toFixed(0) + '%' : '-'}</td>
+                                    <td style="padding:6px">${r.metrics.blockers != null ? r.metrics.blockers : '-'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                ` : '<p style="color:var(--text-muted);margin-top:8px;font-size:0.8rem">No runs recorded</p>'}
+            </div>
+        `).join('');
+    } catch (err) { showToast('Failed to load history: '+err.message,'error'); }
+}
+
+// Init
+renderSkills();
+renderRuns();
+</script>
+</body>
+</html>
