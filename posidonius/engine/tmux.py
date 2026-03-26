@@ -5,6 +5,7 @@ output capture, agent status detection, and clean teardown.
 """
 
 import subprocess  # nosec B404
+import time
 from typing import Any
 
 
@@ -160,6 +161,108 @@ class TmuxManager:
             ["tmux", "kill-session", "-t", session_name],
             capture_output=True,
         )
+
+    def confirm_trust_if_prompted(
+        self,
+        pane_target: str,
+        timeout: float = 5.0,
+        poll_interval: float = 0.2,
+    ) -> bool:
+        """Poll a tmux pane and auto-confirm Claude trust/permission dialogs.
+
+        Claude Code can pause on a directory trust prompt or a
+        --dangerously-skip-permissions confirmation dialog when launched
+        in a fresh directory. This detects those screens and sends the
+        appropriate keystrokes to proceed.
+
+        Parameters
+        ----------
+        pane_target : str
+            Tmux pane target (e.g. ``session:window.pane``).
+        timeout : float
+            Maximum seconds to poll before giving up.
+        poll_interval : float
+            Seconds between polls.
+
+        Returns
+        -------
+        bool
+            True if a prompt was detected and confirmed.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            text = self.capture_pane(pane_target, lines=30).lower()
+
+            # Trust prompt: "Do you trust this folder?"
+            if (
+                "trust this folder" in text or "trust the contents" in text
+            ) and (
+                "enter to confirm" in text
+                or "press enter" in text
+                or "enter to continue" in text
+            ):
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", pane_target, "Enter"],
+                    capture_output=True,
+                )
+                time.sleep(0.5)
+                return True
+
+            # --dangerously-skip-permissions confirmation dialog
+            if "yes, i accept" in text and (
+                "dangerously-skip-permissions" in text
+                or "skip permissions" in text
+                or "permission" in text
+                or "approval" in text
+            ):
+                subprocess.run(
+                    [
+                        "tmux",
+                        "send-keys",
+                        "-t",
+                        pane_target,
+                        "-l",
+                        "\x1b[B",
+                    ],
+                    capture_output=True,
+                )
+                time.sleep(0.2)
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", pane_target, "Enter"],
+                    capture_output=True,
+                )
+                time.sleep(0.5)
+                return True
+
+            time.sleep(poll_interval)
+
+        return False
+
+    def auto_confirm_trust(
+        self, session_name: str, timeout: float = 5.0
+    ) -> int:
+        """Auto-confirm trust prompts on all panes in a session.
+
+        Parameters
+        ----------
+        session_name : str
+            Tmux session name.
+        timeout : float
+            Per-pane polling timeout in seconds.
+
+        Returns
+        -------
+        int
+            Number of panes where a prompt was confirmed.
+        """
+        panes = self.list_panes(session_name)
+        confirmed = 0
+        for pane in panes:
+            if self.confirm_trust_if_prompted(
+                pane["target"], timeout=timeout
+            ):
+                confirmed += 1
+        return confirmed
 
     def detect_agent_status(self, output: str) -> str:
         """Detect agent status from pane output.

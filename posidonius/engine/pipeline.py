@@ -172,8 +172,9 @@ class ExperimentPipeline:
             "mlflow_run_id": child_run_id,
         }
 
-        # Launch via subprocess to run_experiment.py
-        def _launch_experiment() -> None:
+        # Launch via subprocess to run_experiment.py, then auto-confirm
+        # any trust prompts that appear in agent panes.
+        def _launch_and_confirm_trust() -> None:
             try:
                 subprocess.Popen(  # nosec B603
                     [
@@ -190,9 +191,18 @@ class ExperimentPipeline:
                 ] = ExperimentStatus.FAILED
                 self.run_statuses[run_index]["error"] = str(e)
                 self.status = ExperimentStatus.FAILED
+                return
+
+            # Wait for the tmux session to come up, then auto-confirm
+            # trust prompts on all panes as a safety net.
+            for _ in range(30):
+                time.sleep(2)
+                if self.tmux.session_exists(tmux_session):
+                    self.tmux.auto_confirm_trust(tmux_session)
+                    break
 
         thread = threading.Thread(
-            target=_launch_experiment, daemon=True
+            target=_launch_and_confirm_trust, daemon=True
         )
         thread.start()
 
