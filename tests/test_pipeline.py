@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
 from posidonius.engine.pipeline import ExperimentPipeline
 from posidonius.models import (
     ExperimentRunConfig,
@@ -31,15 +32,11 @@ def sample_pipeline() -> PipelineConfig:
 
 
 @pytest.fixture
-def pipeline(
-    sample_pipeline: PipelineConfig, tmp_path: Path
-) -> ExperimentPipeline:
+def pipeline(sample_pipeline: PipelineConfig, tmp_path: Path) -> ExperimentPipeline:
     """Create an ExperimentPipeline for testing."""
     templates_dir = tmp_path / "templates"
     templates_dir.mkdir()
-    (templates_dir / "config.yaml.template").write_text(
-        "template"
-    )
+    (templates_dir / "config.yaml.template").write_text("template")
     (templates_dir / "agent_prompt.md").write_text("prompt")
     return ExperimentPipeline(
         config=sample_pipeline,
@@ -51,16 +48,12 @@ def pipeline(
 class TestExperimentPipeline:
     """Test suite for ExperimentPipeline."""
 
-    def test_init_state(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_init_state(self, pipeline: ExperimentPipeline) -> None:
         """Test pipeline initializes with correct state."""
         assert pipeline.current_run_index == -1
         assert pipeline.status == ExperimentStatus.PENDING
 
-    def test_get_status_pending(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_get_status_pending(self, pipeline: ExperimentPipeline) -> None:
         """Test status when pipeline hasn't started."""
         status = pipeline.get_status()
         assert status.pipeline_name == "scaling-test"
@@ -68,9 +61,7 @@ class TestExperimentPipeline:
         assert status.current_run == -1
         assert status.status == ExperimentStatus.PENDING
 
-    def test_get_status_with_runs(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_get_status_with_runs(self, pipeline: ExperimentPipeline) -> None:
         """Test status reflects completed runs."""
         pipeline.current_run_index = 1
         pipeline.status = ExperimentStatus.RUNNING
@@ -82,9 +73,7 @@ class TestExperimentPipeline:
         status = pipeline.get_status()
         assert status.current_run == 1
         assert len(status.runs) == 1
-        assert (
-            status.runs[0].status == ExperimentStatus.COMPLETED
-        )
+        assert status.runs[0].status == ExperimentStatus.COMPLETED
 
     def test_is_run_complete_checks_completion_file(
         self,
@@ -92,9 +81,7 @@ class TestExperimentPipeline:
         tmp_path: Path,
     ) -> None:
         """Test completion check looks for monitor signal."""
-        run_dir = (
-            tmp_path / "experiments" / "scaling-test_run_0"
-        )
+        run_dir = tmp_path / "experiments" / "scaling-test_run_0"
         run_dir.mkdir(parents=True)
         assert pipeline.is_run_complete(run_dir) is False
 
@@ -115,17 +102,10 @@ class TestExperimentPipeline:
             "num_agents": 2,
         }
         pipeline.teardown_run(0, "marcus_scaling_test_run_0")
-        mock_kill.assert_called_once_with(
-            "marcus_scaling_test_run_0"
-        )
-        assert (
-            pipeline.run_statuses[0]["status"]
-            == ExperimentStatus.COMPLETED
-        )
+        mock_kill.assert_called_once_with("marcus_scaling_test_run_0")
+        assert pipeline.run_statuses[0]["status"] == ExperimentStatus.COMPLETED
 
-    def test_stop_sets_status(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_stop_sets_status(self, pipeline: ExperimentPipeline) -> None:
         """Test stopping pipeline updates status."""
         pipeline.status = ExperimentStatus.RUNNING
         pipeline.stop()
@@ -140,17 +120,11 @@ class TestExperimentPipeline:
         """Test stopping kills active tmux session."""
         pipeline.status = ExperimentStatus.RUNNING
         pipeline.current_run_index = 1
-        pipeline.active_tmux_session = (
-            "marcus_scaling_test_run_1"
-        )
+        pipeline.active_tmux_session = "marcus_scaling_test_run_1"
         pipeline.stop()
-        mock_kill.assert_called_once_with(
-            "marcus_scaling_test_run_1"
-        )
+        mock_kill.assert_called_once_with("marcus_scaling_test_run_1")
 
-    def test_prepare_next_run(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_prepare_next_run(self, pipeline: ExperimentPipeline) -> None:
         """Test preparing the next run in sequence."""
         run_dir = pipeline.prepare_next_run()
         assert run_dir is not None
@@ -158,9 +132,7 @@ class TestExperimentPipeline:
         assert (run_dir / "config.yaml").exists()
         assert (run_dir / "project_spec.md").exists()
 
-    def test_prepare_next_run_increments(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_prepare_next_run_increments(self, pipeline: ExperimentPipeline) -> None:
         """Test preparing runs increments the index."""
         pipeline.prepare_next_run()
         assert pipeline.current_run_index == 0
@@ -175,12 +147,8 @@ class TestExperimentPipeline:
         result = pipeline.prepare_next_run()
         assert result is None
 
-    @patch(
-        "posidonius.engine.tmux.TmuxManager.session_exists"
-    )
-    @patch(
-        "posidonius.engine.tmux.TmuxManager.capture_all_panes"
-    )
+    @patch("posidonius.engine.tmux.TmuxManager.session_exists")
+    @patch("posidonius.engine.tmux.TmuxManager.capture_all_panes")
     def test_get_run_output(
         self,
         mock_capture: Mock,
@@ -202,9 +170,7 @@ class TestExperimentPipeline:
         assert len(output) == 1
         assert output[0]["status"] == "working"
 
-    def test_get_run_output_no_session(
-        self, pipeline: ExperimentPipeline
-    ) -> None:
+    def test_get_run_output_no_session(self, pipeline: ExperimentPipeline) -> None:
         """Test get_run_output returns empty when no session."""
         assert pipeline.get_run_output() == []
 
@@ -222,9 +188,7 @@ class TestPipelineMLflowIntegration:
     ) -> None:
         """Test that start_run creates MLflow parent + child runs."""
         mock_tracker = MagicMock()
-        mock_tracker.start_pipeline_run.return_value = (
-            "parent_123"
-        )
+        mock_tracker.start_pipeline_run.return_value = "parent_123"
         mock_tracker.start_child_run.return_value = "child_456"
         mock_tracker.experiment_id = "exp_789"
         mock_tracker_cls.return_value = mock_tracker
@@ -240,10 +204,7 @@ class TestPipelineMLflowIntegration:
         mock_tracker.start_child_run.assert_called_once_with(
             run_index=0, num_agents=2, subagents_per_agent=0
         )
-        assert (
-            pipeline.run_statuses[0]["mlflow_run_id"]
-            == "child_456"
-        )
+        assert pipeline.run_statuses[0]["mlflow_run_id"] == "child_456"
         mock_thread.start.assert_called_once()
 
     @patch("posidonius.engine.pipeline.MLflowTracker")
@@ -268,13 +229,9 @@ class TestPipelineMLflowIntegration:
         pipeline.teardown_run(0, "marcus_test_run_0")
 
         mock_tracker.log_run_metrics.assert_called_once()
-        call_kwargs = (
-            mock_tracker.log_run_metrics.call_args[1]
-        )
+        call_kwargs = mock_tracker.log_run_metrics.call_args[1]
         assert call_kwargs["completion_time_seconds"] >= 120.0
-        mock_tracker.end_child_run.assert_called_once_with(
-            status="FINISHED"
-        )
+        mock_tracker.end_child_run.assert_called_once_with(status="FINISHED")
 
     @patch("posidonius.engine.pipeline.MLflowTracker")
     @patch("posidonius.engine.tmux.TmuxManager.kill_session")
@@ -293,12 +250,8 @@ class TestPipelineMLflowIntegration:
 
         pipeline.stop()
 
-        mock_tracker.end_child_run.assert_called_once_with(
-            status="KILLED"
-        )
-        mock_tracker.end_pipeline_run.assert_called_once_with(
-            status="KILLED"
-        )
+        mock_tracker.end_child_run.assert_called_once_with(status="KILLED")
+        mock_tracker.end_pipeline_run.assert_called_once_with(status="KILLED")
 
     @patch("posidonius.engine.pipeline.MLflowTracker")
     @patch("posidonius.engine.tmux.TmuxManager.kill_session")

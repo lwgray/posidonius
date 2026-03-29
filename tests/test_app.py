@@ -1,10 +1,12 @@
 """Unit tests for the FastAPI experiment web app."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
 from posidonius.app import create_app
 
 
@@ -13,9 +15,7 @@ def tmp_dirs(tmp_path: Path) -> dict[str, Path]:
     """Create temporary directories for the app."""
     templates_dir = tmp_path / "templates"
     templates_dir.mkdir()
-    (templates_dir / "config.yaml.template").write_text(
-        "template"
-    )
+    (templates_dir / "config.yaml.template").write_text("template")
     (templates_dir / "agent_prompt.md").write_text("prompt")
     experiments_dir = tmp_path / "experiments"
     experiments_dir.mkdir()
@@ -51,9 +51,7 @@ def _create_payload(
 class TestHealthEndpoint:
     """Test suite for health check endpoint."""
 
-    def test_health_returns_ok(
-        self, client: TestClient
-    ) -> None:
+    def test_health_returns_ok(self, client: TestClient) -> None:
         """Test health endpoint returns healthy status."""
         response = client.get("/health")
         assert response.status_code == 200
@@ -69,27 +67,19 @@ class TestListExperiments:
         assert response.status_code == 200
         assert response.json() == []
 
-    def test_list_after_create(
-        self, client: TestClient
-    ) -> None:
+    def test_list_after_create(self, client: TestClient) -> None:
         """Test listing after creating an experiment."""
-        client.post(
-            "/api/experiments", json=_create_payload()
-        )
+        client.post("/api/experiments", json=_create_payload())
         response = client.get("/api/experiments")
         assert response.status_code == 200
         assert len(response.json()) == 1
-        assert (
-            response.json()[0]["pipeline_name"] == "test-exp"
-        )
+        assert response.json()[0]["pipeline_name"] == "test-exp"
 
 
 class TestCreateExperiment:
     """Test suite for creating experiments."""
 
-    def test_create_pipeline(
-        self, client: TestClient
-    ) -> None:
+    def test_create_pipeline(self, client: TestClient) -> None:
         """Test creating a new experiment pipeline."""
         payload = _create_payload("scaling-test")
         payload["runs"] = [
@@ -97,40 +87,40 @@ class TestCreateExperiment:
             {"num_agents": 5},
             {"num_agents": 10},
         ]
-        response = client.post(
-            "/api/experiments", json=payload
-        )
+        response = client.post("/api/experiments", json=payload)
         assert response.status_code == 201
         data = response.json()
         assert data["pipeline_name"] == "scaling-test"
         assert data["total_runs"] == 3
         assert data["status"] == "pending"
 
-    def test_create_with_invalid_complexity(
-        self, client: TestClient
-    ) -> None:
+    def test_create_with_invalid_complexity(self, client: TestClient) -> None:
         """Test creating experiment with invalid complexity."""
         payload = _create_payload()
         payload["complexity"] = "invalid"
-        response = client.post(
-            "/api/experiments", json=payload
-        )
+        response = client.post("/api/experiments", json=payload)
         assert response.status_code == 422
 
-    def test_create_duplicate_name_fails(
-        self, client: TestClient
-    ) -> None:
-        """Test creating experiment with duplicate name fails."""
+    def test_create_duplicate_auto_increments(self, client: TestClient) -> None:
+        """Test duplicate name auto-increments to name-2."""
         payload = _create_payload("dup-test")
         client.post("/api/experiments", json=payload)
-        response = client.post(
-            "/api/experiments", json=payload
-        )
-        assert response.status_code == 409
+        response = client.post("/api/experiments", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["pipeline_name"] == "dup-test-2"
 
-    def test_create_with_custom_agents(
-        self, client: TestClient
-    ) -> None:
+    def test_create_triple_duplicate_increments(self, client: TestClient) -> None:
+        """Test third duplicate increments to name-3."""
+        payload = _create_payload("trip-test")
+        client.post("/api/experiments", json=payload)
+        client.post("/api/experiments", json=payload)
+        response = client.post("/api/experiments", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["pipeline_name"] == "trip-test-3"
+
+    def test_create_with_custom_agents(self, client: TestClient) -> None:
         """Test creating experiment with explicit agent configs."""
         payload = _create_payload("custom-agents")
         payload["complexity"] = "standard"
@@ -154,9 +144,7 @@ class TestCreateExperiment:
                 ],
             }
         ]
-        response = client.post(
-            "/api/experiments", json=payload
-        )
+        response = client.post("/api/experiments", json=payload)
         assert response.status_code == 201
 
 
@@ -169,71 +157,47 @@ class TestGetExperimentStatus:
             "/api/experiments",
             json=_create_payload("status-test"),
         )
-        response = client.get(
-            "/api/experiments/status-test"
-        )
+        response = client.get("/api/experiments/status-test")
         assert response.status_code == 200
         data = response.json()
         assert data["pipeline_name"] == "status-test"
         assert data["status"] == "pending"
 
-    def test_get_nonexistent_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_get_nonexistent_returns_404(self, client: TestClient) -> None:
         """Test getting status of non-existent experiment."""
-        response = client.get(
-            "/api/experiments/nonexistent"
-        )
+        response = client.get("/api/experiments/nonexistent")
         assert response.status_code == 404
 
 
 class TestStartExperiment:
     """Test suite for starting experiments."""
 
-    @patch(
-        "posidonius.engine.pipeline."
-        "ExperimentPipeline.start_run"
-    )
-    def test_start_experiment(
-        self, mock_start: Mock, client: TestClient
-    ) -> None:
+    @patch("posidonius.engine.pipeline." "ExperimentPipeline.start_run")
+    def test_start_experiment(self, mock_start: Mock, client: TestClient) -> None:
         """Test starting an experiment launches agents."""
         mock_start.return_value = "marcus_test_exp_run_0"
         client.post(
             "/api/experiments",
             json=_create_payload("start-test"),
         )
-        response = client.post(
-            "/api/experiments/start-test/start"
-        )
+        response = client.post("/api/experiments/start-test/start")
         assert response.status_code == 200
         data = response.json()
-        assert (
-            data["tmux_session"] == "marcus_test_exp_run_0"
-        )
+        assert data["tmux_session"] == "marcus_test_exp_run_0"
         assert "Started run 0" in data["message"]
         mock_start.assert_called_once_with(0)
 
-    def test_start_nonexistent_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_start_nonexistent_returns_404(self, client: TestClient) -> None:
         """Test starting non-existent experiment."""
-        response = client.post(
-            "/api/experiments/nonexistent/start"
-        )
+        response = client.post("/api/experiments/nonexistent/start")
         assert response.status_code == 404
 
 
 class TestGetExperimentOutput:
     """Test suite for live tmux output capture."""
 
-    @patch(
-        "posidonius.engine.pipeline."
-        "ExperimentPipeline.get_run_output"
-    )
-    def test_get_output(
-        self, mock_output: Mock, client: TestClient
-    ) -> None:
+    @patch("posidonius.engine.pipeline." "ExperimentPipeline.get_run_output")
+    def test_get_output(self, mock_output: Mock, client: TestClient) -> None:
         """Test getting live output from agent panes."""
         mock_output.return_value = [
             {
@@ -253,59 +217,42 @@ class TestGetExperimentOutput:
             "/api/experiments",
             json=_create_payload("output-test"),
         )
-        response = client.get(
-            "/api/experiments/output-test/output"
-        )
+        response = client.get("/api/experiments/output-test/output")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 2
         assert data[0]["status"] == "working"
         assert data[1]["status"] == "waiting"
 
-    def test_output_nonexistent_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_output_nonexistent_returns_404(self, client: TestClient) -> None:
         """Test getting output for non-existent experiment."""
-        response = client.get(
-            "/api/experiments/nonexistent/output"
-        )
+        response = client.get("/api/experiments/nonexistent/output")
         assert response.status_code == 404
 
 
 class TestStopExperiment:
     """Test suite for stopping experiments."""
 
-    def test_stop_experiment(
-        self, client: TestClient
-    ) -> None:
+    def test_stop_experiment(self, client: TestClient) -> None:
         """Test stopping an experiment."""
         client.post(
             "/api/experiments",
             json=_create_payload("stop-test"),
         )
-        response = client.delete(
-            "/api/experiments/stop-test"
-        )
+        response = client.delete("/api/experiments/stop-test")
         assert response.status_code == 200
         assert response.json()["status"] == "stopped"
 
-    def test_stop_nonexistent_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_stop_nonexistent_returns_404(self, client: TestClient) -> None:
         """Test stopping non-existent experiment."""
-        response = client.delete(
-            "/api/experiments/nonexistent"
-        )
+        response = client.delete("/api/experiments/nonexistent")
         assert response.status_code == 404
 
 
 class TestOptimizeEndpoint:
     """Test suite for the optimal agent pre-flight endpoint."""
 
-    @patch(
-        "posidonius.engine.optimizer."
-        "OptimalAgentOptimizer.analyze_sync"
-    )
+    @patch("posidonius.engine.optimizer." "OptimalAgentOptimizer.analyze_sync")
     def test_optimize_returns_recommendation(
         self, mock_analyze: Mock, client: TestClient
     ) -> None:
@@ -343,12 +290,8 @@ class TestOptimizeEndpoint:
 class TestExportEndpoint:
     """Test suite for terminal output export."""
 
-    @patch(
-        "posidonius.engine.tmux.TmuxManager.list_panes"
-    )
-    @patch(
-        "posidonius.engine.tmux.TmuxManager.capture_pane"
-    )
+    @patch("posidonius.engine.tmux.TmuxManager.list_panes")
+    @patch("posidonius.engine.tmux.TmuxManager.capture_pane")
     def test_export_returns_zip(
         self,
         mock_capture: Mock,
@@ -367,39 +310,24 @@ class TestExportEndpoint:
             json=_create_payload("export-test"),
         )
         pipelines = client.app.state.pipelines  # type: ignore[union-attr]
-        pipelines[
-            "export-test"
-        ].active_tmux_session = "marcus_test"
+        pipelines["export-test"].active_tmux_session = "marcus_test"
 
-        response = client.get(
-            "/api/experiments/export-test/export"
-        )
+        response = client.get("/api/experiments/export-test/export")
         assert response.status_code == 200
-        assert (
-            response.headers["content-type"]
-            == "application/zip"
-        )
+        assert response.headers["content-type"] == "application/zip"
 
-    def test_export_nonexistent_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_export_nonexistent_returns_404(self, client: TestClient) -> None:
         """Test export for non-existent experiment."""
-        response = client.get(
-            "/api/experiments/nonexistent/export"
-        )
+        response = client.get("/api/experiments/nonexistent/export")
         assert response.status_code == 404
 
-    def test_export_no_session_returns_400(
-        self, client: TestClient
-    ) -> None:
+    def test_export_no_session_returns_400(self, client: TestClient) -> None:
         """Test export when no active session."""
         client.post(
             "/api/experiments",
             json=_create_payload("no-session"),
         )
-        response = client.get(
-            "/api/experiments/no-session/export"
-        )
+        response = client.get("/api/experiments/no-session/export")
         assert response.status_code == 400
 
 
@@ -415,9 +343,7 @@ class TestHistoryEndpoint:
         mock_experiment.experiment_id = "1"
         mock_experiment.name = "scaling-test"
         mock_experiment.lifecycle_stage = "active"
-        mock_mlflow.search_experiments.return_value = [
-            mock_experiment
-        ]
+        mock_mlflow.search_experiments.return_value = [mock_experiment]
 
         mock_run = MagicMock()
         mock_run.info.run_id = "run_123"
@@ -442,26 +368,67 @@ class TestHistoryEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1
-        assert (
-            data[0]["experiment_name"] == "scaling-test"
-        )
+        assert data[0]["experiment_name"] == "scaling-test"
         assert len(data[0]["runs"]) == 1
-        assert (
-            data[0]["runs"][0]["metrics"][
-                "tasks_completed"
-            ]
-            == 10
-        )
+        assert data[0]["runs"][0]["metrics"]["tasks_completed"] == 10
 
     @patch("posidonius.app.mlflow")
-    def test_history_empty(
-        self, mock_mlflow: Mock, client: TestClient
-    ) -> None:
+    def test_history_empty(self, mock_mlflow: Mock, client: TestClient) -> None:
         """Test history returns empty list when no experiments."""
         mock_mlflow.search_experiments.return_value = []
         response = client.get("/api/experiments/history")
         assert response.status_code == 200
         assert response.json() == []
+
+
+class TestRunCompleteEndpoint:
+    """Test suite for run completion check endpoint."""
+
+    def test_check_not_found(self, client: TestClient) -> None:
+        """Test completion check for non-existent pipeline."""
+        response = client.get("/api/experiments/nonexistent/run-complete")
+        assert response.status_code == 404
+
+    def test_check_no_run_dir(self, client: TestClient) -> None:
+        """Test completion check when no run has started."""
+        client.post(
+            "/api/experiments",
+            json=_create_payload("check-test"),
+        )
+        response = client.get("/api/experiments/check-test/run-complete")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["complete"] is False
+
+    @patch("posidonius.engine.tmux.TmuxManager.session_exists")
+    @patch("posidonius.engine.tmux.TmuxManager.auto_confirm_trust")
+    def test_check_complete_true(
+        self,
+        mock_trust: Mock,
+        mock_exists: Mock,
+        client: TestClient,
+        tmp_path: Any,
+    ) -> None:
+        """Test completion check detects experiment_complete.json."""
+        mock_exists.return_value = True
+        client.post(
+            "/api/experiments",
+            json=_create_payload("done-test"),
+        )
+        pipelines = client.app.state.pipelines  # type: ignore[union-attr]
+        pipeline = pipelines["done-test"]
+        # Manually set run dir and write completion file
+        run_dir = tmp_path / "done_run"
+        run_dir.mkdir()
+        (run_dir / "experiment_complete.json").write_text('{"status":"complete"}')
+        pipeline._run_dirs[0] = run_dir
+        pipeline.current_run_index = 0
+
+        response = client.get("/api/experiments/done-test/run-complete")
+        data = response.json()
+        assert data["complete"] is True
+        assert data["run_index"] == 0
+        assert str(run_dir) in data["run_dir"]
 
 
 class TestStaticFiles:

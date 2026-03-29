@@ -2,6 +2,7 @@
 
 import pytest
 from pydantic import ValidationError
+
 from posidonius.models import (
     AgentConfig,
     ExperimentRunConfig,
@@ -76,12 +77,8 @@ class TestExperimentRunConfig:
     def test_create_run_config_with_custom_agents(self) -> None:
         """Test creating a run config with explicit agent definitions."""
         agents = [
-            AgentConfig(
-                id="a1", name="A1", role="backend", skills=["python"]
-            ),
-            AgentConfig(
-                id="a2", name="A2", role="frontend", skills=["react"]
-            ),
+            AgentConfig(id="a1", name="A1", role="backend", skills=["python"]),
+            AgentConfig(id="a2", name="A2", role="frontend", skills=["react"]),
         ]
         run = ExperimentRunConfig(num_agents=2, agents=agents)
         assert run.agents is not None and len(run.agents) == 2
@@ -93,9 +90,7 @@ class TestExperimentRunConfig:
 
     def test_run_config_with_subagents(self) -> None:
         """Test run config with subagents_per_agent."""
-        run = ExperimentRunConfig(
-            num_agents=3, subagents_per_agent=2
-        )
+        run = ExperimentRunConfig(num_agents=3, subagents_per_agent=2)
         assert run.subagents_per_agent == 2
 
 
@@ -140,9 +135,41 @@ class TestPipelineConfig:
             complexity="prototype",
             runs=[ExperimentRunConfig(num_agents=3)],
         )
-        assert pipeline.provider == "planka"
+        assert pipeline.provider == "sqlite"
         assert pipeline.mode == "new_project"
         assert pipeline.base_experiment_dir is None
+        assert pipeline.auto_advance is False
+
+    def test_pipeline_auto_advance_enabled(self) -> None:
+        """Test auto_advance can be set to True."""
+        pipeline = PipelineConfig(
+            name="test",
+            project_name="Test",
+            project_spec="spec",
+            complexity="prototype",
+            auto_advance=True,
+            runs=[ExperimentRunConfig(num_agents=3)],
+        )
+        assert pipeline.auto_advance is True
+
+    def test_run_status_has_run_dir(self) -> None:
+        """Test RunStatus includes run_dir field."""
+        from posidonius.models import ExperimentStatus, RunStatus
+
+        status = RunStatus(
+            run_index=0,
+            num_agents=3,
+            status=ExperimentStatus.RUNNING,
+        )
+        assert status.run_dir is None
+
+        status_with_dir = RunStatus(
+            run_index=0,
+            num_agents=3,
+            status=ExperimentStatus.RUNNING,
+            run_dir="/tmp/test_run",
+        )
+        assert status_with_dir.run_dir == "/tmp/test_run"
 
     def test_pipeline_complexity_validation(self) -> None:
         """Test that complexity must be a valid option."""

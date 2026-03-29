@@ -4,14 +4,13 @@ import argparse
 from pathlib import Path
 
 import uvicorn
+
 from posidonius.app import create_app
 
 
 def main() -> None:
     """Start the experiment dashboard server."""
-    parser = argparse.ArgumentParser(
-        description="Posidonius Experiment Dashboard"
-    )
+    parser = argparse.ArgumentParser(description="Posidonius Experiment Dashboard")
     parser.add_argument(
         "--port",
         type=int,
@@ -38,9 +37,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    templates_dir = (
-        Path(args.templates_dir) if args.templates_dir else None
-    )
+    templates_dir = Path(args.templates_dir) if args.templates_dir else None
 
     app = create_app(
         templates_dir=templates_dir,

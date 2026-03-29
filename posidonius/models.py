@@ -88,7 +88,7 @@ class PipelineConfig(BaseModel):
     project_name: str
     project_spec: str
     complexity: str
-    provider: str = "planka"
+    provider: str = "sqlite"
     mode: str = "new_project"
     default_skills: list[str] = Field(
         default_factory=lambda: [
@@ -111,6 +111,7 @@ class PipelineConfig(BaseModel):
     base_experiment_dir: Optional[str] = None
     timeout_project_creation: int = 300
     timeout_agent_startup: int = 60
+    auto_advance: bool = False
 
     @field_validator("complexity")
     @classmethod
@@ -220,6 +221,7 @@ class RunStatus(BaseModel):
     tasks_total: Optional[int] = None
     mlflow_run_id: Optional[str] = None
     error: Optional[str] = None
+    run_dir: Optional[str] = None
 
 
 class PipelineStatus(BaseModel):

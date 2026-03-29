@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 import httpx
+
 from posidonius.models import ExperimentRunConfig, OptimalAgentResponse
 
 
@@ -26,9 +27,7 @@ class OptimalAgentOptimizer:
         Marcus MCP HTTP endpoint URL.
     """
 
-    def __init__(
-        self, marcus_url: str = "http://localhost:4298/mcp"
-    ) -> None:
+    def __init__(self, marcus_url: str = "http://localhost:4298/mcp") -> None:
         self.marcus_url = marcus_url
 
     async def _call_mcp_tool(
@@ -69,9 +68,7 @@ class OptimalAgentOptimizer:
         response.raise_for_status()
         result = response.json()
         if "error" in result:
-            raise RuntimeError(
-                f"MCP error: {result['error']}"
-            )
+            raise RuntimeError(f"MCP error: {result['error']}")
         return result.get("result", {})  # type: ignore[no-any-return]
 
     async def analyze_with_marcus(
@@ -125,9 +122,7 @@ class OptimalAgentOptimizer:
                 client,
                 "create_project",
                 {
-                    "project_name": (
-                        f"{project_name} (optimization)"
-                    ),
+                    "project_name": (f"{project_name} (optimization)"),
                     "description": project_spec,
                     "options": {
                         "complexity": complexity,
@@ -154,9 +149,7 @@ class OptimalAgentOptimizer:
             if result:
                 return result
 
-            raise RuntimeError(
-                "Empty response from get_optimal_agent_count"
-            )
+            raise RuntimeError("Empty response from get_optimal_agent_count")
 
     def analyze_sync(
         self,
@@ -188,17 +181,13 @@ class OptimalAgentOptimizer:
         with concurrent.futures.ThreadPoolExecutor() as pool:
             mcp_result = pool.submit(
                 lambda: asyncio.run(
-                    self.analyze_with_marcus(
-                        project_name, project_spec, complexity
-                    )
+                    self.analyze_with_marcus(project_name, project_spec, complexity)
                 )
             ).result(timeout=120)
 
         return self.parse_mcp_response(mcp_result)
 
-    def build_recommended_runs(
-        self, optimal_agents: int
-    ) -> list[ExperimentRunConfig]:
+    def build_recommended_runs(self, optimal_agents: int) -> list[ExperimentRunConfig]:
         """Generate recommended pipeline runs from an optimal agent count.
 
         Creates three runs: ~50% of optimal, optimal, and ~200% of optimal
@@ -223,9 +212,7 @@ class OptimalAgentOptimizer:
             ExperimentRunConfig(num_agents=double),
         ]
 
-    def parse_mcp_response(
-        self, mcp_response: dict[str, Any]
-    ) -> OptimalAgentResponse:
+    def parse_mcp_response(self, mcp_response: dict[str, Any]) -> OptimalAgentResponse:
         """Parse the MCP get_optimal_agent_count response.
 
         Parameters
@@ -243,16 +230,10 @@ class OptimalAgentOptimizer:
 
         return OptimalAgentResponse(
             optimal_agents=optimal,
-            max_parallelism=mcp_response.get(
-                "max_parallelism", 0
-            ),
+            max_parallelism=mcp_response.get("max_parallelism", 0),
             total_tasks=mcp_response.get("total_tasks", 0),
-            critical_path_hours=mcp_response.get(
-                "critical_path_hours", 0.0
-            ),
-            efficiency_gain_percent=mcp_response.get(
-                "efficiency_gain_percent", 0.0
-            ),
+            critical_path_hours=mcp_response.get("critical_path_hours", 0.0),
+            efficiency_gain_percent=mcp_response.get("efficiency_gain_percent", 0.0),
             recommended_runs=recommended_runs,
         )
 

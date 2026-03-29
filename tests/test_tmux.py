@@ -35,21 +35,15 @@ class TestTmuxManager:
         assert "Progress: 50%" in output
 
     @patch("posidonius.engine.tmux.subprocess.run")
-    def test_capture_pane_handles_error(
-        self, mock_run: Mock
-    ) -> None:
+    def test_capture_pane_handles_error(self, mock_run: Mock) -> None:
         """Test capture returns empty string on error."""
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "tmux"
-        )
+        mock_run.side_effect = subprocess.CalledProcessError(1, "tmux")
         mgr = TmuxManager()
         output = mgr.capture_pane("nonexistent:0.0")
         assert output == ""
 
     @patch("posidonius.engine.tmux.subprocess.run")
-    def test_capture_pane_handles_timeout(
-        self, mock_run: Mock
-    ) -> None:
+    def test_capture_pane_handles_timeout(self, mock_run: Mock) -> None:
         """Test capture returns empty string on timeout."""
         mock_run.side_effect = subprocess.TimeoutExpired("tmux", 5)
         mgr = TmuxManager()
@@ -75,13 +69,9 @@ class TestTmuxManager:
         assert panes[0]["title"] == "Project Creator"
 
     @patch("posidonius.engine.tmux.subprocess.run")
-    def test_list_panes_empty_session(
-        self, mock_run: Mock
-    ) -> None:
+    def test_list_panes_empty_session(self, mock_run: Mock) -> None:
         """Test listing panes for non-existent session."""
-        mock_run.side_effect = subprocess.CalledProcessError(
-            1, "tmux"
-        )
+        mock_run.side_effect = subprocess.CalledProcessError(1, "tmux")
         mgr = TmuxManager()
         panes = mgr.list_panes("nonexistent")
         assert panes == []
@@ -91,17 +81,12 @@ class TestTmuxManager:
         """Test capturing output from all panes in a session."""
         list_result = MagicMock(
             stdout=(
-                "marcus_test:0.0||Creator||bash\n"
-                "marcus_test:0.1||Worker 1||bash\n"
+                "marcus_test:0.0||Creator||bash\n" "marcus_test:0.1||Worker 1||bash\n"
             ),
             returncode=0,
         )
-        capture_1 = MagicMock(
-            stdout="Creating project...\n", returncode=0
-        )
-        capture_2 = MagicMock(
-            stdout="Working on task-456...\n", returncode=0
-        )
+        capture_1 = MagicMock(stdout="Creating project...\n", returncode=0)
+        capture_2 = MagicMock(stdout="Working on task-456...\n", returncode=0)
         mock_run.side_effect = [list_result, capture_1, capture_2]
 
         mgr = TmuxManager()
@@ -140,28 +125,17 @@ class TestTmuxManager:
     def test_detect_agent_status_working(self) -> None:
         """Test detecting agent is actively working."""
         mgr = TmuxManager()
-        assert (
-            mgr.detect_agent_status("Writing file: src/main.py\n")
-            == "working"
-        )
+        assert mgr.detect_agent_status("Writing file: src/main.py\n") == "working"
 
     def test_detect_agent_status_waiting(self) -> None:
         """Test detecting agent is waiting."""
         mgr = TmuxManager()
-        assert (
-            mgr.detect_agent_status(
-                "Waiting for project creation...\n"
-            )
-            == "waiting"
-        )
+        assert mgr.detect_agent_status("Waiting for project creation...\n") == "waiting"
 
     def test_detect_agent_status_complete(self) -> None:
         """Test detecting agent has completed."""
         mgr = TmuxManager()
-        assert (
-            mgr.detect_agent_status("Work Complete\n==========\n")
-            == "complete"
-        )
+        assert mgr.detect_agent_status("Work Complete\n==========\n") == "complete"
 
     def test_detect_agent_status_idle(self) -> None:
         """Test detecting agent is idle."""
@@ -171,7 +145,4 @@ class TestTmuxManager:
     def test_detect_agent_status_error(self) -> None:
         """Test detecting agent error state."""
         mgr = TmuxManager()
-        assert (
-            mgr.detect_agent_status("Error: connection failed\n")
-            == "error"
-        )
+        assert mgr.detect_agent_status("Error: connection failed\n") == "error"

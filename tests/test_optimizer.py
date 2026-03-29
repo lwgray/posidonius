@@ -3,6 +3,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+
 from posidonius.engine.optimizer import OptimalAgentOptimizer
 from posidonius.models import OptimalAgentResponse
 
@@ -66,35 +67,22 @@ class TestOptimalAgentOptimizer:
     def test_create_scaling_runs_with_subagents(self) -> None:
         """Test creating scaling runs with subagents."""
         optimizer = OptimalAgentOptimizer()
-        runs = optimizer.create_scaling_runs(
-            [5, 10], subagents_per_agent=2
-        )
+        runs = optimizer.create_scaling_runs([5, 10], subagents_per_agent=2)
         assert all(r.subagents_per_agent == 2 for r in runs)
 
     def test_analyze_sync_raises_when_marcus_unavailable(
         self,
     ) -> None:
         """Test analyze_sync raises when Marcus is down."""
-        optimizer = OptimalAgentOptimizer(
-            marcus_url="http://localhost:99999/mcp"
-        )
+        optimizer = OptimalAgentOptimizer(marcus_url="http://localhost:99999/mcp")
         with pytest.raises(Exception):
-            optimizer.analyze_sync(
-                "test", "Build something", "prototype"
-            )
+            optimizer.analyze_sync("test", "Build something", "prototype")
 
-    @patch(
-        "posidonius.engine.optimizer."
-        "OptimalAgentOptimizer.analyze_with_marcus"
-    )
-    def test_analyze_sync_calls_marcus(
-        self, mock_analyze: Mock
-    ) -> None:
+    @patch("posidonius.engine.optimizer." "OptimalAgentOptimizer.analyze_with_marcus")
+    def test_analyze_sync_calls_marcus(self, mock_analyze: Mock) -> None:
         """Test analyze_sync delegates to Marcus MCP."""
 
-        async def fake_analyze(
-            *args: object, **kwargs: object
-        ) -> dict[str, object]:
+        async def fake_analyze(*args: object, **kwargs: object) -> dict[str, object]:
             return {
                 "optimal_agents": 5,
                 "max_parallelism": 3,
@@ -105,8 +93,6 @@ class TestOptimalAgentOptimizer:
 
         mock_analyze.side_effect = fake_analyze
         optimizer = OptimalAgentOptimizer()
-        result = optimizer.analyze_sync(
-            "test", "Build an API", "standard"
-        )
+        result = optimizer.analyze_sync("test", "Build an API", "standard")
         assert result.optimal_agents == 5
         assert len(result.recommended_runs) == 3

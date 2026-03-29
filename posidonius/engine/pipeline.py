@@ -91,6 +91,7 @@ class ExperimentPipeline:
                     tasks_total=run_info.get("tasks_total"),
                     mlflow_run_id=run_info.get("mlflow_run_id"),
                     error=run_info.get("error"),
+                    run_dir=str(self._run_dirs.get(idx, "")) or None,
                 )
             )
 
@@ -186,9 +187,7 @@ class ExperimentPipeline:
                     stderr=subprocess.DEVNULL,
                 )
             except OSError as e:
-                self.run_statuses[run_index][
-                    "status"
-                ] = ExperimentStatus.FAILED
+                self.run_statuses[run_index]["status"] = ExperimentStatus.FAILED
                 self.run_statuses[run_index]["error"] = str(e)
                 self.status = ExperimentStatus.FAILED
                 return
@@ -201,9 +200,7 @@ class ExperimentPipeline:
                     self.tmux.auto_confirm_trust(tmux_session)
                     break
 
-        thread = threading.Thread(
-            target=_launch_and_confirm_trust, daemon=True
-        )
+        thread = threading.Thread(target=_launch_and_confirm_trust, daemon=True)
         thread.start()
 
         return tmux_session
@@ -222,9 +219,7 @@ class ExperimentPipeline:
             return []
         return self.tmux.capture_all_panes(self.active_tmux_session)
 
-    def teardown_run(
-        self, run_index: int, tmux_session: str
-    ) -> None:
+    def teardown_run(self, run_index: int, tmux_session: str) -> None:
         """Clean up after a completed run, log metrics to MLflow.
 
         Parameters
@@ -235,9 +230,7 @@ class ExperimentPipeline:
             Tmux session name to kill.
         """
         if self.tracker is not None:
-            elapsed = time.time() - self._run_start_times.get(
-                run_index, time.time()
-            )
+            elapsed = time.time() - self._run_start_times.get(run_index, time.time())
             run_info = self.run_statuses.get(run_index, {})
             self.tracker.log_run_metrics(
                 completion_time_seconds=elapsed,
@@ -250,9 +243,7 @@ class ExperimentPipeline:
         self.tmux.kill_session(tmux_session)
         self.active_tmux_session = None
         if run_index in self.run_statuses:
-            self.run_statuses[run_index][
-                "status"
-            ] = ExperimentStatus.COMPLETED
+            self.run_statuses[run_index]["status"] = ExperimentStatus.COMPLETED
 
     def stop(self) -> None:
         """Stop the pipeline, kill tmux, and end MLflow runs."""

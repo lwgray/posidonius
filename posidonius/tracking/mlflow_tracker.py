@@ -8,6 +8,7 @@ across agent configurations.
 from typing import Optional
 
 import mlflow
+
 from posidonius.models import PipelineConfig
 
 
@@ -37,9 +38,7 @@ class MLflowTracker:
         str
             MLflow run ID for the parent pipeline run.
         """
-        run = mlflow.start_run(
-            run_name=f"{self.config.name}_pipeline"
-        )
+        run = mlflow.start_run(run_name=f"{self.config.name}_pipeline")
         self.parent_run_id = run.info.run_id
         mlflow.log_params(
             {
@@ -47,9 +46,7 @@ class MLflowTracker:
                 "project_name": self.config.project_name,
                 "complexity": self.config.complexity,
                 "total_runs": len(self.config.runs),
-                "run_agent_counts": str(
-                    [r.num_agents for r in self.config.runs]
-                ),
+                "run_agent_counts": str([r.num_agents for r in self.config.runs]),
             }
         )
         return self.parent_run_id
@@ -85,8 +82,7 @@ class MLflowTracker:
                 "run_index": run_index,
                 "num_agents": num_agents,
                 "subagents_per_agent": subagents_per_agent,
-                "total_workers": num_agents
-                + (num_agents * subagents_per_agent),
+                "total_workers": num_agents + (num_agents * subagents_per_agent),
             }
         )
         run_id: str = run.info.run_id
@@ -112,9 +108,7 @@ class MLflowTracker:
         blockers : int
             Number of blockers encountered.
         """
-        completion_rate = (
-            tasks_completed / tasks_total if tasks_total > 0 else 0.0
-        )
+        completion_rate = tasks_completed / tasks_total if tasks_total > 0 else 0.0
         mlflow.log_metrics(
             {
                 "completion_time_seconds": completion_time_seconds,
