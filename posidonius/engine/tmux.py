@@ -101,9 +101,7 @@ class TmuxManager:
         ):
             return []
 
-    def capture_all_panes(
-        self, session_name: str
-    ) -> list[dict[str, Any]]:
+    def capture_all_panes(self, session_name: str) -> list[dict[str, Any]]:
         """Capture output from all panes in a session.
 
         Parameters
@@ -194,9 +192,7 @@ class TmuxManager:
             text = self.capture_pane(pane_target, lines=30).lower()
 
             # Trust prompt: "Do you trust this folder?"
-            if (
-                "trust this folder" in text or "trust the contents" in text
-            ) and (
+            if ("trust this folder" in text or "trust the contents" in text) and (
                 "enter to confirm" in text
                 or "press enter" in text
                 or "enter to continue" in text
@@ -250,9 +246,7 @@ class TmuxManager:
 
         return False
 
-    def auto_confirm_trust(
-        self, session_name: str, timeout: float = 5.0
-    ) -> int:
+    def auto_confirm_trust(self, session_name: str, timeout: float = 5.0) -> int:
         """Auto-confirm trust prompts on all panes in a session.
 
         Parameters
@@ -270,9 +264,7 @@ class TmuxManager:
         panes = self.list_panes(session_name)
         confirmed = 0
         for pane in panes:
-            if self.confirm_trust_if_prompted(
-                pane["target"], timeout=timeout
-            ):
+            if self.confirm_trust_if_prompted(pane["target"], timeout=timeout):
                 confirmed += 1
         return confirmed
 

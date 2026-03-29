@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+
 from posidonius.models import ExperimentRunConfig, PipelineConfig
 from posidonius.tracking.mlflow_tracker import MLflowTracker
 
@@ -32,13 +33,9 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test tracker creates MLflow experiment on init."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         tracker = MLflowTracker(sample_pipeline)
-        mock_mlflow.set_experiment.assert_called_once_with(
-            "scaling-test"
-        )
+        mock_mlflow.set_experiment.assert_called_once_with("scaling-test")
         assert tracker.experiment_id == "exp_123"
 
     @patch("posidonius.tracking.mlflow_tracker.mlflow")
@@ -48,9 +45,7 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test starting a parent pipeline run."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         mock_run = MagicMock()
         mock_run.info.run_id = "parent_run_123"
         mock_mlflow.start_run.return_value = mock_run
@@ -58,9 +53,7 @@ class TestMLflowTracker:
         tracker = MLflowTracker(sample_pipeline)
         run_id = tracker.start_pipeline_run()
 
-        mock_mlflow.start_run.assert_called_once_with(
-            run_name="scaling-test_pipeline"
-        )
+        mock_mlflow.start_run.assert_called_once_with(run_name="scaling-test_pipeline")
         mock_mlflow.log_params.assert_called_once()
         assert run_id == "parent_run_123"
 
@@ -71,9 +64,7 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test starting a child run for a specific agent config."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         parent_run = MagicMock()
         parent_run.info.run_id = "parent_123"
         mock_mlflow.start_run.return_value = parent_run
@@ -99,9 +90,7 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test logging metrics for a completed run."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         tracker = MLflowTracker(sample_pipeline)
 
         tracker.log_run_metrics(
@@ -127,14 +116,10 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test ending a child run."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         tracker = MLflowTracker(sample_pipeline)
         tracker.end_child_run(status="FINISHED")
-        mock_mlflow.end_run.assert_called_once_with(
-            status="FINISHED"
-        )
+        mock_mlflow.end_run.assert_called_once_with(status="FINISHED")
 
     @patch("posidonius.tracking.mlflow_tracker.mlflow")
     def test_end_pipeline_run(
@@ -143,9 +128,7 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test ending the parent pipeline run."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         parent_run = MagicMock()
         parent_run.info.run_id = "parent_123"
         mock_mlflow.start_run.return_value = parent_run
@@ -163,9 +146,7 @@ class TestMLflowTracker:
         sample_pipeline: PipelineConfig,
     ) -> None:
         """Test logging metrics handles zero tasks gracefully."""
-        mock_mlflow.set_experiment.return_value = MagicMock(
-            experiment_id="exp_123"
-        )
+        mock_mlflow.set_experiment.return_value = MagicMock(experiment_id="exp_123")
         tracker = MLflowTracker(sample_pipeline)
         tracker.log_run_metrics(
             completion_time_seconds=0.0,

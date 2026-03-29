@@ -7,6 +7,7 @@ pre-flight estimation via Marcus MCP.
 
 import asyncio
 import io
+import sqlite3
 import zipfile
 from pathlib import Path
 from typing import Any, Optional
@@ -15,6 +16,7 @@ import mlflow
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 from mlflow.exceptions import MlflowException
+
 from posidonius.engine.optimizer import OptimalAgentOptimizer
 from posidonius.engine.pipeline import ExperimentPipeline
 from posidonius.engine.terminal import TmuxTerminalSession
@@ -45,20 +47,13 @@ def create_app(
     """
     app = FastAPI(
         title="Posidonius Experiment Dashboard",
-        description=(
-            "Web UI for running multi-agent experiments"
-        ),
+        description=("Web UI for running multi-agent experiments"),
         version="0.1.0",
     )
 
     if templates_dir is None:
         templates_dir = (
-            Path.home()
-            / "dev"
-            / "marcus"
-            / "dev-tools"
-            / "experiments"
-            / "templates"
+            Path.home() / "dev" / "marcus" / "dev-tools" / "experiments" / "templates"
         )
     if experiments_dir is None:
         experiments_dir = Path.home() / "experiments"
@@ -82,9 +77,7 @@ def create_app(
     @app.get("/api/experiments")
     def list_experiments() -> list[dict[str, Any]]:
         """List all experiment pipelines."""
-        return [
-            p.get_status().model_dump() for p in pipelines.values()
-        ]
+        return [p.get_status().model_dump() for p in pipelines.values()]
 
     @app.get("/api/experiments/history")
     def get_experiment_history() -> list[dict[str, Any]]:
@@ -131,11 +124,22 @@ def create_app(
 
         return history
 
+    def _deduplicate_name(base_name: str) -> str:
+        """Return base_name if available, else base_name-2, -3, etc."""
+        if base_name not in pipelines:
+            return base_name
+        suffix = 2
+        while f"{base_name}-{suffix}" in pipelines:
+            suffix += 1
+        return f"{base_name}-{suffix}"
+
     @app.post("/api/experiments", status_code=201)
     def create_experiment(
         config: PipelineConfig,
     ) -> dict[str, Any]:
         """Create a new experiment pipeline (does not start it).
+
+        Auto-increments name if it already exists (e.g. snake-game-2).
 
         Parameters
         ----------
@@ -147,13 +151,11 @@ def create_app(
         dict[str, Any]
             Pipeline status after creation.
         """
-        if config.name in pipelines:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Pipeline '{config.name}' already exists"
-                ),
-            )
+        original_name = config.name
+        config.name = _deduplicate_name(config.name)
+        # Keep project_name in sync if it matched the original
+        if config.project_name == original_name:
+            config.project_name = config.name
 
         pipeline = ExperimentPipeline(
             config=config,
@@ -164,9 +166,7 @@ def create_app(
         return pipeline.get_status().model_dump()
 
     @app.post("/api/experiments/{name}/start")
-    def start_experiment(
-        name: str, run_index: int = 0
-    ) -> dict[str, Any]:
+    def start_experiment(name: str, run_index: int = 0) -> dict[str, Any]:
         """Start an experiment run (launches agents via subprocess).
 
         Parameters
@@ -190,9 +190,7 @@ def create_app(
         if pipeline.status == ExperimentStatus.RUNNING:
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    "Pipeline is already running. Stop it first."
-                ),
+                detail=("Pipeline is already running. Stop it first."),
             )
         if run_index >= len(pipeline.config.runs):
             raise HTTPException(
@@ -221,9 +219,7 @@ def create_app(
             )
 
     @app.post("/api/experiments/{name}/complete-run")
-    def complete_run(
-        name: str, run_index: int
-    ) -> dict[str, Any]:
+    def complete_run(name: str, run_index: int) -> dict[str, Any]:
         """Mark the current run as complete and tear it down.
 
         Parameters
@@ -249,9 +245,7 @@ def create_app(
                 status_code=400,
                 detail=f"Run {run_index} not found",
             )
-        tmux_session = pipeline.run_statuses[run_index].get(
-            "tmux_session"
-        )
+        tmux_session = pipeline.run_statuses[run_index].get("tmux_session")
         if tmux_session:
             pipeline.teardown_run(run_index, tmux_session)
 
@@ -284,6 +278,41 @@ def create_app(
                 detail=f"Pipeline '{name}' not found",
             )
         return pipelines[name].get_status().model_dump()
+
+    @app.get("/api/experiments/{name}/run-complete")
+    def check_run_complete(name: str) -> dict[str, Any]:
+        """Check if the current run's experiment_complete.json exists.
+
+        Lightweight endpoint safe to poll at 15s intervals.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+
+        Returns
+        -------
+        dict[str, Any]
+            Whether the current run has completed.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        idx = pipeline.current_run_index
+        run_dir = pipeline._run_dirs.get(idx)
+        if run_dir is None:
+            return {
+                "complete": False,
+                "run_index": idx,
+            }
+        return {
+            "complete": pipeline.is_run_complete(run_dir),
+            "run_index": idx,
+            "run_dir": str(run_dir),
+        }
 
     @app.get("/api/experiments/{name}/output")
     def get_experiment_output(
@@ -377,9 +406,7 @@ def create_app(
     # Track active terminal sessions for cleanup
     terminal_sessions: dict[str, TmuxTerminalSession] = {}
 
-    @app.websocket(
-        "/api/experiments/{name}/terminal/{pane_index}"
-    )
+    @app.websocket("/api/experiments/{name}/terminal/{pane_index}")
     async def terminal_websocket(
         websocket: WebSocket, name: str, pane_index: int
     ) -> None:
@@ -400,26 +427,18 @@ def create_app(
         await websocket.accept()
 
         if name not in pipelines:
-            await websocket.close(
-                code=4004, reason="Pipeline not found"
-            )
+            await websocket.close(code=4004, reason="Pipeline not found")
             return
 
         pipeline = pipelines[name]
         if not pipeline.active_tmux_session:
-            await websocket.close(
-                code=4004, reason="No active session"
-            )
+            await websocket.close(code=4004, reason="No active session")
             return
 
         # Build tmux target for the specific pane
-        panes = pipeline.tmux.list_panes(
-            pipeline.active_tmux_session
-        )
+        panes = pipeline.tmux.list_panes(pipeline.active_tmux_session)
         if pane_index >= len(panes):
-            await websocket.close(
-                code=4004, reason="Pane not found"
-            )
+            await websocket.close(code=4004, reason="Pane not found")
             return
 
         pane_target = panes[pane_index]["target"]
@@ -440,9 +459,7 @@ def create_app(
                     data = await term.read_async()
                     if data and data != last_content:
                         last_content = data
-                        await websocket.send_bytes(
-                            b"\x1b[2J\x1b[H" + data
-                        )
+                        await websocket.send_bytes(b"\x1b[2J\x1b[H" + data)
                     await asyncio.sleep(0.5)
 
             read_task = asyncio.create_task(read_loop())
@@ -465,9 +482,7 @@ def create_app(
                     message = await websocket.receive()
                     if "bytes" in message:
                         raw = message["bytes"]
-                        text = raw.decode(
-                            "utf-8", errors="replace"
-                        )
+                        text = raw.decode("utf-8", errors="replace")
                     elif "text" in message:
                         text = message["text"]
                         if text.startswith("resize:"):
@@ -523,9 +538,7 @@ def create_app(
                 detail="No active tmux session to export",
             )
 
-        panes = pipeline.tmux.list_panes(
-            pipeline.active_tmux_session
-        )
+        panes = pipeline.tmux.list_panes(pipeline.active_tmux_session)
         if not panes:
             raise HTTPException(
                 status_code=400,
@@ -534,18 +547,10 @@ def create_app(
 
         # Capture full scrollback (large buffer)
         buf = io.BytesIO()
-        with zipfile.ZipFile(
-            buf, "w", zipfile.ZIP_DEFLATED
-        ) as zf:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, pane in enumerate(panes):
-                output = pipeline.tmux.capture_pane(
-                    pane["target"], lines=10000
-                )
-                title = (
-                    pane["title"]
-                    .replace(" ", "_")
-                    .replace("/", "_")
-                )
+                output = pipeline.tmux.capture_pane(pane["target"], lines=10000)
+                title = pane["title"].replace(" ", "_").replace("/", "_")
                 filename = f"{i:02d}_{title}.txt"
                 zf.writestr(filename, output)
 
@@ -554,11 +559,70 @@ def create_app(
             buf,
             media_type="application/zip",
             headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{name}_output.zip"'
-                )
+                "Content-Disposition": (f'attachment; filename="{name}_output.zip"')
             },
         )
+
+    @app.get("/api/board-metrics")
+    def get_board_metrics(
+        db_path: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Get task counts from a SQLite kanban database.
+
+        Lightweight endpoint for the experiment progress strip.
+        Reads directly from kanban.db — no Marcus dependency.
+
+        Parameters
+        ----------
+        db_path : str | None
+            Path to kanban.db. Defaults to Marcus's
+            ``~/dev/marcus/data/kanban.db``.
+
+        Returns
+        -------
+        dict[str, Any]
+            Task counts by status and completion percentage.
+        """
+        if db_path is None:
+            marcus_root = Path.home() / "dev" / "marcus"
+            db_path = str(marcus_root / "data" / "kanban.db")
+
+        db = Path(db_path)
+        if not db.exists():
+            return {"available": False}
+
+        try:
+            conn = sqlite3.connect(str(db), timeout=5)
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS cnt " "FROM tasks GROUP BY status"
+            ).fetchall()
+            agents_row = conn.execute(
+                "SELECT COUNT(DISTINCT assigned_to) AS n "
+                "FROM tasks "
+                "WHERE status = 'in_progress' "
+                "AND assigned_to IS NOT NULL"
+            ).fetchone()
+            conn.close()
+
+            counts: dict[str, int] = {}
+            for status, cnt in rows:
+                counts[status] = cnt
+
+            total = sum(counts.values())
+            done = counts.get("done", 0)
+
+            return {
+                "available": True,
+                "total": total,
+                "todo": counts.get("todo", 0),
+                "in_progress": counts.get("in_progress", 0),
+                "done": done,
+                "blocked": counts.get("blocked", 0),
+                "pct": (round(done / total * 100) if total > 0 else 0),
+                "active_agents": (agents_row[0] if agents_row else 0),
+            }
+        except sqlite3.Error:
+            return {"available": False}
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

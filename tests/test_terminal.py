@@ -33,9 +33,7 @@ class TestTmuxTerminalSession:
         )
 
     @patch("posidonius.engine.terminal.subprocess.run")
-    def test_send_key_sends_special_key(
-        self, mock_run: Mock
-    ) -> None:
+    def test_send_key_sends_special_key(self, mock_run: Mock) -> None:
         """Test send_key sends named key to tmux pane."""
         session = TmuxTerminalSession("marcus_test:0.1")
         session.start()
@@ -55,9 +53,7 @@ class TestTmuxTerminalSession:
     @patch("posidonius.engine.terminal.subprocess.run")
     def test_read_captures_pane(self, mock_run: Mock) -> None:
         """Test read uses tmux capture-pane."""
-        mock_run.return_value = MagicMock(
-            stdout=b"hello world\n"
-        )
+        mock_run.return_value = MagicMock(stdout=b"hello world\n")
         session = TmuxTerminalSession("marcus_test:0.1")
         session.start(rows=30, cols=80)
         result = session.read()
@@ -95,9 +91,7 @@ class TestTmuxTerminalSession:
         assert session._alive is False
 
     @patch("posidonius.engine.terminal.subprocess.run")
-    def test_is_alive_checks_session(
-        self, mock_run: Mock
-    ) -> None:
+    def test_is_alive_checks_session(self, mock_run: Mock) -> None:
         """Test is_alive checks if tmux session exists."""
         mock_run.return_value = MagicMock(returncode=0)
         session = TmuxTerminalSession("marcus_test:0.1")

@@ -180,6 +180,28 @@
             height: 100%; background: var(--accent); border-radius: 2px;
             transition: width 0.3s;
         }
+        /* Task progress strip */
+        .task-strip {
+            display: flex; align-items: center; gap: 12px;
+            padding: 8px 12px; margin-top: 8px;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: var(--radius); font-size: 0.8rem;
+        }
+        .task-strip:empty { display: none; }
+        .task-strip .ts-bar {
+            flex: 1; height: 6px; background: var(--border);
+            border-radius: 3px; overflow: hidden; min-width: 80px;
+        }
+        .task-strip .ts-fill {
+            height: 100%; border-radius: 3px;
+            background: var(--green); transition: width 0.5s;
+        }
+        .task-strip .ts-stat { white-space: nowrap; }
+        .task-strip .ts-stat strong { color: var(--text); }
+        .task-strip .ts-done strong { color: var(--green); }
+        .task-strip .ts-blocked strong { color: var(--red); }
+        .task-strip .ts-agents strong { color: var(--accent); }
+        .task-strip .ts-sep { color: var(--border); }
     </style>
 </head>
 <body>
@@ -201,12 +223,12 @@
         <form id="experiment-form">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Pipeline Name</label>
-                    <input type="text" id="pipeline-name" placeholder="e.g., snake-game-scaling" value="snake-game" required>
+                    <label>Experiment Name</label>
+                    <input type="text" id="pipeline-name" placeholder="e.g., snake-game" value="snake-game" required>
                 </div>
                 <div class="form-group">
                     <label>Project Name</label>
-                    <input type="text" id="project-name" placeholder="e.g., Snake Game Demo" value="snake-game-v71" required>
+                    <input type="text" id="project-name" placeholder="(auto from experiment name)" value="">
                 </div>
             </div>
             <div class="form-group">
@@ -225,30 +247,40 @@
                 <div class="form-group">
                     <label>Provider</label>
                     <select id="provider">
-                        <option value="planka" selected>Planka</option>
+                        <option value="sqlite" selected>SQLite</option>
+                        <option value="planka">Planka</option>
                         <option value="github">GitHub</option>
                         <option value="linear">Linear</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Project Timeout (s)</label>
-                    <input type="number" id="timeout" value="300" min="60">
-                </div>
-            </div>
-            <div class="form-group">
-                <label>Default Skills</label>
-                <div class="skills-container" id="skills-container"></div>
             </div>
             <div style="margin-top:16px">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                    <label style="margin:0">Pipeline Runs (Sequential)</label>
-                    <button type="button" class="btn btn-secondary btn-sm" id="add-run">+ Add Run</button>
+                    <label style="margin:0">Runs (Sequential)</label>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <label style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;color:var(--text-muted);margin:0;cursor:pointer">
+                            <input type="checkbox" id="auto-advance" checked> Auto-advance
+                        </label>
+                        <button type="button" class="btn btn-secondary btn-sm" id="add-run">+ Add Run</button>
+                    </div>
                 </div>
                 <div id="runs-list"></div>
             </div>
+            <details style="margin-top:12px">
+                <summary style="cursor:pointer;color:var(--text-muted);font-size:0.8rem;user-select:none">Advanced Settings</summary>
+                <div style="margin-top:8px">
+                    <div class="form-group">
+                        <label>Default Skills</label>
+                        <div class="skills-container" id="skills-container"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Project Timeout (s)</label>
+                        <input type="number" id="timeout" value="300" min="60">
+                    </div>
+                </div>
+            </details>
             <div class="btn-group">
-                <button type="submit" class="btn btn-primary">Create Pipeline</button>
-                <button type="button" class="btn btn-success" id="btn-create-start">Create & Start</button>
+                <button type="submit" class="btn btn-success">Run Experiment</button>
             </div>
         </form>
     </div>
@@ -348,9 +380,11 @@ document.getElementById('add-run').addEventListener('click', () => {
 });
 
 function buildPayload() {
+    const pipeName = document.getElementById('pipeline-name').value.trim();
+    const projName = document.getElementById('project-name').value.trim();
     return {
-        name: document.getElementById('pipeline-name').value,
-        project_name: document.getElementById('project-name').value,
+        name: pipeName,
+        project_name: projName || pipeName,
         project_spec: document.getElementById('project-spec').value,
         complexity: document.getElementById('complexity').value,
         provider: document.getElementById('provider').value,
@@ -358,19 +392,16 @@ function buildPayload() {
         default_skills: Array.from(selectedSkills),
         timeout_project_creation: parseInt(document.getElementById('timeout').value),
         runs: runs.map(r => ({num_agents: r.num_agents, subagents_per_agent: r.subagents})),
+        auto_advance: document.getElementById('auto-advance').checked,
     };
 }
 
-// Create pipeline
+// Run Experiment (form submit = create + auto-start)
 document.getElementById('experiment-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    await createPipeline(false);
-});
-
-// Create & Start
-document.getElementById('btn-create-start').addEventListener('click', async () => {
     await createPipeline(true);
 });
+
 
 async function createPipeline(autoStart) {
     const payload = buildPayload();
@@ -380,12 +411,25 @@ async function createPipeline(autoStart) {
             body: JSON.stringify(payload),
         });
         if (!resp.ok) { const e = await resp.json(); showToast(e.detail||'Failed','error'); return; }
-        showToast('Pipeline created!', 'success');
+        const result = await resp.json();
+        const resolvedName = result.pipeline_name;
+        // Update form to show resolved name (may have been auto-incremented)
+        if (resolvedName !== payload.name) {
+            document.getElementById('pipeline-name').value = resolvedName;
+            showToast(`Created as "${resolvedName}" (name auto-incremented)`, 'success');
+        } else {
+            showToast('Experiment created!', 'success');
+        }
+
+        // Register for auto-advance if enabled
+        if (payload.auto_advance) {
+            autoAdvancePipelines.add(resolvedName);
+        }
 
         if (autoStart) {
-            const startResp = await fetch(`/api/experiments/${payload.name}/start`, {method:'POST'});
+            const startResp = await fetch(`/api/experiments/${resolvedName}/start`, {method:'POST'});
             if (startResp.ok) {
-                showToast('Experiment started! Agents spawning...', 'success');
+                showToast('Agents spawning...', 'success');
             } else {
                 const e = await startResp.json();
                 showToast(e.detail||'Failed to start','error');
@@ -442,18 +486,24 @@ async function refreshExperiments() {
                         <span>Current: ${exp.current_run >= 0 ? 'Run '+exp.current_run : 'Not started'}</span>
                         ${exp.runs.map(r => `<span>Run ${r.run_index}: ${r.num_agents} agents <span class="badge badge-${r.status}">${r.status}</span></span>`).join('')}
                     </div>
-                    ${tmux ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px">tmux attach -t "${tmux}"</div>` : ''}
+                    ${tmux ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px">tmux attach -t "${tmux}"</div>` : ''}
+                    ${(() => { const rd = exp.runs.find(r => r.run_dir)?.run_dir; return rd ? `<div style="font-size:0.65rem;color:var(--text-muted);font-family:monospace;margin-top:3px">${rd}</div>` : ''; })()}
                     <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
+                    <div class="task-strip" id="tasks-${exp.pipeline_name}"></div>
                     <div class="agent-grid" id="output-${exp.pipeline_name}"></div>
                 </div>`;
             }
             container.innerHTML = html;
         }
 
-        // Set up terminal panels for running experiments
+        // Set up terminal panels, task metrics, and auto-advance for running experiments
         for (const exp of data) {
             if (exp.status === 'running') {
                 fetchPanesAndRenderTerminals(exp.pipeline_name);
+                fetchTaskMetrics(exp.pipeline_name);
+                if (autoAdvancePipelines.has(exp.pipeline_name)) {
+                    checkAutoAdvance(exp.pipeline_name);
+                }
             }
         }
     } catch (err) { console.error('Refresh failed:', err); }
@@ -726,6 +776,68 @@ async function refreshHistory() {
             </div>
         `).join('');
     } catch (err) { showToast('Failed to load history: '+err.message,'error'); }
+}
+
+// Auto-advance tracking
+const autoAdvancePipelines = new Set();
+const advancingInProgress = new Set();
+
+async function checkAutoAdvance(name) {
+    if (advancingInProgress.has(name)) return;
+    try {
+        const resp = await fetch(`/api/experiments/${name}/run-complete`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.complete) return;
+
+        advancingInProgress.add(name);
+        // Auto-complete the current run
+        const completeResp = await fetch(
+            `/api/experiments/${name}/complete-run?run_index=${data.run_index}`,
+            {method: 'POST'}
+        );
+        if (!completeResp.ok) { advancingInProgress.delete(name); return; }
+        showToast(`Run ${data.run_index} auto-completed`, 'success');
+
+        // Start next run if available
+        const statusResp = await fetch(`/api/experiments/${name}`);
+        const status = await statusResp.json();
+        const nextRun = data.run_index + 1;
+        if (nextRun < status.total_runs) {
+            await fetch(`/api/experiments/${name}/start?run_index=${nextRun}`, {method: 'POST'});
+            showToast(`Auto-started run ${nextRun}`, 'success');
+        } else {
+            showToast(`All runs complete for ${name}!`, 'success');
+            autoAdvancePipelines.delete(name);
+        }
+        refreshExperiments();
+    } catch (e) { /* silent */ }
+    finally { advancingInProgress.delete(name); }
+}
+
+// Task metrics strip
+async function fetchTaskMetrics(name) {
+    const el = document.getElementById('tasks-' + name);
+    if (!el) return;
+    try {
+        const resp = await fetch('/api/board-metrics');
+        const m = await resp.json();
+        if (!m.available) { el.innerHTML = ''; return; }
+
+        const blockerHtml = m.blocked > 0
+            ? `<span class="ts-sep">·</span><span class="ts-stat ts-blocked"><strong>${m.blocked}</strong> blocked</span>`
+            : '';
+
+        el.innerHTML = `
+            <div class="ts-bar"><div class="ts-fill" style="width:${m.pct}%"></div></div>
+            <span class="ts-stat ts-done"><strong>${m.done}</strong>/${m.total} tasks</span>
+            <span class="ts-sep">·</span>
+            <span class="ts-stat ts-done"><strong>${m.pct}%</strong></span>
+            <span class="ts-sep">·</span>
+            <span class="ts-stat ts-agents"><strong>${m.active_agents}</strong> agents</span>
+            ${blockerHtml}
+        `;
+    } catch (e) { el.innerHTML = ''; }
 }
 
 // Init

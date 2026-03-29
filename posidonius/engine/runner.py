@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
 from posidonius.models import AgentConfig, ExperimentRunConfig, PipelineConfig
 
 
@@ -58,14 +59,10 @@ class ExperimentRunner:
             Tmux session name.
         """
         run_config = self.pipeline.runs[run_index]
-        project_name = (
-            f"{self.pipeline.project_name}-run_{run_index}-{run_config.num_agents}_agents"
-        )
+        project_name = f"{self.pipeline.project_name}-run_{run_index}-{run_config.num_agents}_agents"
         return f"marcus_{project_name.lower().replace(' ', '_')}"
 
-    def generate_agents(
-        self, run_config: ExperimentRunConfig
-    ) -> list[AgentConfig]:
+    def generate_agents(self, run_config: ExperimentRunConfig) -> list[AgentConfig]:
         """Generate agent configurations for a run.
 
         If run_config.agents is set, returns those directly.
@@ -166,9 +163,7 @@ class ExperimentRunner:
             },
         }
 
-    def write_config_yaml(
-        self, run_dir: Path, config_dict: dict[str, Any]
-    ) -> Path:
+    def write_config_yaml(self, run_dir: Path, config_dict: dict[str, Any]) -> Path:
         """Write config.yaml to the run directory.
 
         Parameters
@@ -185,9 +180,7 @@ class ExperimentRunner:
         """
         config_file = run_dir / "config.yaml"
         with open(config_file, "w") as f:
-            yaml.dump(
-                config_dict, f, default_flow_style=False, sort_keys=False
-            )
+            yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
         return config_file
 
     def write_project_spec(self, run_dir: Path) -> Path:
@@ -271,9 +264,7 @@ class ExperimentRunner:
         run_dir = self.create_run_directory(run_index)
         config_dict = self.generate_config_dict(run_config, agents, run_index)
         # Add project_root so Marcus validation knows where source code lives
-        config_dict["project_options"]["project_root"] = str(
-            run_dir / "implementation"
-        )
+        config_dict["project_options"]["project_root"] = str(run_dir / "implementation")
         self.write_config_yaml(run_dir, config_dict)
         self.write_project_spec(run_dir)
         return run_dir
