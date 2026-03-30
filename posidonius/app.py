@@ -729,16 +729,56 @@ def create_app(
             return {"available": False}
 
         try:
+            # Find the active project's kanban project_id
+            # so we only count tasks for this experiment
+            project_id = None
+            marcus_root = Path.home() / "dev" / "marcus"
+            projects_file = (
+                marcus_root / "data" / "marcus_state" / "projects.json"
+            )
+            if projects_file.exists():
+                import json as _json
+
+                with open(projects_file) as f:
+                    projects_data = _json.load(f)
+                active = projects_data.get("active_project", {})
+                active_id = active.get("project_id", "")
+                if active_id and active_id in projects_data:
+                    project_id = (
+                        projects_data[active_id]
+                        .get("provider_config", {})
+                        .get("project_id")
+                    )
+
             conn = sqlite3.connect(str(db), timeout=5)
-            rows = conn.execute(
-                "SELECT status, COUNT(*) AS cnt " "FROM tasks GROUP BY status"
-            ).fetchall()
-            agents_row = conn.execute(
-                "SELECT COUNT(DISTINCT assigned_to) AS n "
-                "FROM tasks "
-                "WHERE status = 'in_progress' "
-                "AND assigned_to IS NOT NULL"
-            ).fetchone()
+
+            if project_id:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) AS cnt "
+                    "FROM tasks WHERE project_id = ? "
+                    "GROUP BY status",
+                    (project_id,),
+                ).fetchall()
+                agents_row = conn.execute(
+                    "SELECT COUNT(DISTINCT assigned_to) AS n "
+                    "FROM tasks "
+                    "WHERE status = 'in_progress' "
+                    "AND assigned_to IS NOT NULL "
+                    "AND project_id = ?",
+                    (project_id,),
+                ).fetchone()
+            else:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) AS cnt "
+                    "FROM tasks GROUP BY status"
+                ).fetchall()
+                agents_row = conn.execute(
+                    "SELECT COUNT(DISTINCT assigned_to) AS n "
+                    "FROM tasks "
+                    "WHERE status = 'in_progress' "
+                    "AND assigned_to IS NOT NULL"
+                ).fetchone()
+
             conn.close()
 
             counts: dict[str, int] = {}
