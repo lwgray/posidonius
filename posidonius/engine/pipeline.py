@@ -6,7 +6,6 @@ Launches experiments via subprocess to run_experiment.py, communicating
 across process boundaries rather than importing Marcus internals.
 """
 
-import json
 import subprocess  # nosec B404
 import threading
 import time
@@ -192,13 +191,22 @@ class ExperimentPipeline:
                 self.status = ExperimentStatus.FAILED
                 return
 
-            # Wait for the tmux session to come up, then auto-confirm
-            # trust prompts on all panes as a safety net.
+            # Wait for the tmux session to come up, then poll for
+            # trust prompts repeatedly. Agents spawn at different times
+            # so trust prompts can appear after the session is already up.
+            session_found = False
             for _ in range(30):
                 time.sleep(2)
                 if self.tmux.session_exists(tmux_session):
+                    session_found = True
                     self.tmux.auto_confirm_trust(tmux_session)
                     break
+
+            # Keep polling for late trust prompts for 60 more seconds
+            if session_found:
+                for _ in range(12):
+                    time.sleep(5)
+                    self.tmux.auto_confirm_trust(tmux_session)
 
         thread = threading.Thread(target=_launch_and_confirm_trust, daemon=True)
         thread.start()
