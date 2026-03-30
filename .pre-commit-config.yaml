@@ -1,0 +1,108 @@
+repos:
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.16.1
+    hooks:
+      - id: mypy
+        args: [--config-file=pyproject.toml]
+        additional_dependencies:
+          - types-PyYAML
+          - pydantic
+          - mlflow
+          - fastapi
+          - uvicorn
+          - httpx
+        exclude: ^(tests/|docs/)
+
+  # Docstring checking with pydocstyle
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: 6.3.0
+    hooks:
+      - id: pydocstyle
+        args: [--config=pyproject.toml]
+        exclude: ^(tests/|docs/|setup\.py)
+
+  # Code formatting with black
+  - repo: https://github.com/psf/black
+    rev: 26.3.0
+    hooks:
+      - id: black
+
+  # Import sorting with isort
+  - repo: https://github.com/pycqa/isort
+    rev: 6.0.1
+    hooks:
+      - id: isort
+        args: ["--profile", "black"]
+
+  # Linting with flake8
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.3.0
+    hooks:
+      - id: flake8
+        args: [--max-line-length=88, --extend-ignore=E203]
+        exclude: ^(tests/|docs/)
+
+  # Security checks
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.8.6
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml']
+
+  # General pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: debug-statements
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Check for common security issues
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: ^(tests/|\.git/|\.env\.example)
+
+  # Prevent naive datetime usage
+  - repo: local
+    hooks:
+      - id: no-naive-datetime
+        name: Prevent naive datetime.now() usage
+        entry: 'datetime\.now\(\)(?![^\n]*#\s*timezone-naive-ok)'
+        language: pygrep
+        types: [python]
+        exclude: '^(migrations/|\.mypy_cache/|\.pytest_cache/|__pycache__/)'
+
+      # Version bump reminders
+      - id: version-reminder
+        name: Version Bump Reminder
+        entry: bash -c 'if git branch --show-current | grep -qE "^(release|hotfix)/"; then echo "REMINDER - Did you bump version?"; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: changelog-reminder
+        name: CHANGELOG Update Reminder
+        entry: bash -c 'if git diff --cached --name-only | grep -qE "^posidonius/"; then if ! git diff --cached --name-only | grep -q "CHANGELOG.md"; then echo "REMINDER - Did you update CHANGELOG.md?"; fi; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+# Configuration
+default_language_version:
+  python: python3.12
+
+fail_fast: false
+exclude: '^(\.git|\.hg|\.mypy_cache|\.tox|\.venv|_build|buck-out|build|dist|node_modules)/'
