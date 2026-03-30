@@ -59,7 +59,10 @@ class ExperimentRunner:
             Tmux session name.
         """
         run_config = self.pipeline.runs[run_index]
-        project_name = f"{self.pipeline.project_name}-run_{run_index}-{run_config.num_agents}_agents"
+        project_name = (
+            f"{self.pipeline.project_name}"
+            f"-run_{run_index}-{run_config.num_agents}_agents"
+        )
         return f"marcus_{project_name.lower().replace(' ', '_')}"
 
     def generate_agents(self, run_config: ExperimentRunConfig) -> list[AgentConfig]:
@@ -139,7 +142,9 @@ class ExperimentRunner:
         """
         return {
             "project_name": (
-                f"{self.pipeline.project_name}-run_{run_index}-{run_config.num_agents}_agents"
+                f"{self.pipeline.project_name}"
+                f"-run_{run_index}"
+                f"-{run_config.num_agents}_agents"
             ),
             "project_spec_file": "project_spec.md",
             "project_options": {
