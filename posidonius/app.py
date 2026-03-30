@@ -8,6 +8,7 @@ pre-flight estimation via Marcus MCP.
 import asyncio
 import io
 import sqlite3
+import time
 import zipfile
 from pathlib import Path
 from typing import Any, Optional
@@ -312,6 +313,142 @@ def create_app(
             "complete": pipeline.is_run_complete(run_dir),
             "run_index": idx,
             "run_dir": str(run_dir),
+        }
+
+    @app.post("/api/experiments/{name}/auto-advance")
+    def start_auto_advance(
+        name: str, poll_interval: int = 30
+    ) -> dict[str, Any]:
+        """Start auto-advance mode for the pipeline.
+
+        Polls for experiment_complete.json every ``poll_interval``
+        seconds. When a run completes, tears down tmux (killing
+        zombie agents), then starts the next run. Finishes when
+        all runs are done.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+        poll_interval : int
+            Seconds between polls. Default 30.
+
+        Returns
+        -------
+        dict[str, Any]
+            Confirmation that auto-advance started.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        if pipeline._auto_advance_active:
+            return {
+                "message": "Auto-advance already active",
+                "current_run": pipeline.current_run_index,
+            }
+        if pipeline.status != ExperimentStatus.RUNNING:
+            raise HTTPException(
+                status_code=400,
+                detail="Pipeline is not running. Start a run first.",
+            )
+        pipeline.auto_advance(poll_interval=poll_interval)
+        return {
+            "message": "Auto-advance started",
+            "poll_interval": poll_interval,
+            "current_run": pipeline.current_run_index,
+            "total_runs": len(pipeline.config.runs),
+        }
+
+    @app.post("/api/experiments/{name}/start-all")
+    def start_all_runs(
+        name: str, poll_interval: int = 30
+    ) -> dict[str, Any]:
+        """Start run 0 and enable auto-advance through all runs.
+
+        Single call to kick off the entire pipeline hands-free.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+        poll_interval : int
+            Seconds between completion polls. Default 30.
+
+        Returns
+        -------
+        dict[str, Any]
+            Pipeline status with auto-advance confirmation.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        if pipeline.status == ExperimentStatus.RUNNING:
+            raise HTTPException(
+                status_code=409,
+                detail="Pipeline is already running.",
+            )
+        try:
+            tmux_session = pipeline.start_run(0)
+            pipeline.auto_advance(poll_interval=poll_interval)
+            return {
+                "message": (
+                    f"Started pipeline with {len(pipeline.config.runs)} "
+                    f"runs, auto-advance enabled"
+                ),
+                "tmux_session": tmux_session,
+                "poll_interval": poll_interval,
+                "total_runs": len(pipeline.config.runs),
+                **pipeline.get_status().model_dump(),
+            }
+        except Exception as e:
+            pipeline.status = ExperimentStatus.FAILED
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to start pipeline: {e}",
+            )
+
+    @app.get("/api/experiments/{name}/auto-advance/status")
+    def get_auto_advance_status(name: str) -> dict[str, Any]:
+        """Check auto-advance status.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+
+        Returns
+        -------
+        dict[str, Any]
+            Auto-advance state, current run, elapsed time.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        elapsed = 0.0
+        idx = pipeline.current_run_index
+        if idx in pipeline._run_start_times:
+            elapsed = time.time() - pipeline._run_start_times[idx]
+
+        return {
+            "active": pipeline._auto_advance_active,
+            "pipeline_status": pipeline.status.value,
+            "current_run": idx,
+            "total_runs": len(pipeline.config.runs),
+            "current_run_elapsed_seconds": round(elapsed, 1),
+            "runs_completed": sum(
+                1
+                for r in pipeline.run_statuses.values()
+                if r.get("status") == ExperimentStatus.COMPLETED
+            ),
         }
 
     @app.get("/api/experiments/{name}/output")
