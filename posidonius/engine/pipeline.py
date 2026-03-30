@@ -60,6 +60,7 @@ class ExperimentPipeline:
         self._run_dirs: dict[int, Path] = {}
         self._run_start_times: dict[int, float] = {}
         self.tracker: Optional[MLflowTracker] = None
+        self._auto_advance_active: bool = False
         self._run_experiment_script = run_experiment_script or (
             Path.home()
             / "dev"
@@ -270,6 +271,52 @@ class ExperimentPipeline:
         if self.tracker is not None:
             self.tracker.end_pipeline_run(status="FINISHED")
         self.status = ExperimentStatus.COMPLETED
+
+    def auto_advance(self, poll_interval: int = 30) -> None:
+        """Poll for completion and advance to next run automatically.
+
+        Runs in a background thread. Checks for experiment_complete.json
+        every ``poll_interval`` seconds. When found, tears down the current
+        run (killing tmux and zombie agents), then starts the next run.
+        After all runs complete, marks the pipeline finished.
+
+        Parameters
+        ----------
+        poll_interval : int
+            Seconds between completion checks. Default 30.
+        """
+        if self._auto_advance_active:
+            return
+
+        def _loop() -> None:
+            self._auto_advance_active = True
+            try:
+                while self.status == ExperimentStatus.RUNNING:
+                    run_index = self.current_run_index
+                    run_dir = self._run_dirs.get(run_index)
+
+                    if run_dir and self.is_run_complete(run_dir):
+                        # Tear down current run (kills tmux + agents)
+                        tmux_session = self.run_statuses.get(
+                            run_index, {}
+                        ).get("tmux_session")
+                        if tmux_session:
+                            self.teardown_run(run_index, tmux_session)
+
+                        # Start next run or finish
+                        next_index = run_index + 1
+                        if next_index < len(self.config.runs):
+                            self.start_run(next_index)
+                        else:
+                            self.complete_pipeline()
+                            break
+
+                    time.sleep(poll_interval)
+            finally:
+                self._auto_advance_active = False
+
+        thread = threading.Thread(target=_loop, daemon=True)
+        thread.start()
 
     def prepare_next_run(self) -> Optional[Path]:
         """Prepare the next run in the pipeline (without launching).
