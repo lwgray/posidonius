@@ -62,6 +62,7 @@ class ExperimentPipeline:
         self._run_start_times: dict[int, float] = {}
         self.tracker: Optional[MLflowTracker] = None
         self._auto_advance_active: bool = False
+        self._auto_advance_paused: bool = False
         self.events = PipelineEventLog(base_dir, config.name)
         self._run_experiment_script = run_experiment_script or (
             Path.home()
@@ -358,6 +359,11 @@ class ExperimentPipeline:
                     poll_count += 1
 
                     if run_dir and self.is_run_complete(run_dir):
+                        # If paused, wait for resume before teardown
+                        if self._auto_advance_paused:
+                            time.sleep(poll_interval)
+                            continue
+
                         elapsed = time.time() - self._run_start_times.get(
                             run_index, time.time()
                         )

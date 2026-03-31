@@ -440,6 +440,7 @@ def create_app(
 
         return {
             "active": pipeline._auto_advance_active,
+            "paused": pipeline._auto_advance_paused,
             "pipeline_status": pipeline.status.value,
             "current_run": idx,
             "total_runs": len(pipeline.config.runs),
@@ -449,6 +450,65 @@ def create_app(
                 for r in pipeline.run_statuses.values()
                 if r.get("status") == ExperimentStatus.COMPLETED
             ),
+        }
+
+    @app.post("/api/experiments/{name}/auto-advance/pause")
+    def pause_advance(name: str) -> dict[str, Any]:
+        """Pause auto-advance so tmux stays alive after run completes.
+
+        Use this before running Epictetus or inspecting the session.
+        The run will complete and experiment_complete.json will be
+        written, but tmux won't be killed and the next run won't start
+        until you call resume.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+
+        Returns
+        -------
+        dict[str, Any]
+            Confirmation.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        pipeline._auto_advance_paused = True
+        return {
+            "message": "Auto-advance paused — tmux will stay alive after completion",
+            "paused": True,
+        }
+
+    @app.post("/api/experiments/{name}/auto-advance/resume")
+    def resume_advance(name: str) -> dict[str, Any]:
+        """Resume auto-advance after pause.
+
+        Tears down tmux and advances to the next run.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+
+        Returns
+        -------
+        dict[str, Any]
+            Confirmation.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        pipeline._auto_advance_paused = False
+        return {
+            "message": "Auto-advance resumed — will tear down and advance",
+            "paused": False,
         }
 
     @app.get("/api/experiments/{name}/output")
