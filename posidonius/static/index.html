@@ -495,27 +495,12 @@ async function refreshExperiments() {
                     return `<span style="color:var(--text-muted)" title="Run ${i+1}: pending">○</span>`;
                 }).join(' ');
 
-                // Header line
-                let headerRight = '';
-                if (isRunning) {
-                    headerRight = `<button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
-                } else if (isPending && exp.current_run < 0) {
-                    headerRight = `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
-                } else if (isCompleted) {
-                    headerRight = `<span style="color:var(--green)">COMPLETED</span>`;
-                }
-
                 // Status line
                 let statusLine = '';
-                if (isRunning) {
-                    statusLine = `Run ${runNum} of ${exp.total_runs} · ${numAgents} agents`;
-                } else if (isCompleted) {
-                    statusLine = `${completedRuns} runs completed`;
-                } else if (isPending && exp.current_run >= 0) {
-                    statusLine = `${completedRuns}/${exp.total_runs} runs done — ready for next`;
-                } else {
-                    statusLine = `${exp.total_runs} runs configured · ${numAgents} agents each`;
-                }
+                if (isRunning) statusLine = `Run ${runNum} of ${exp.total_runs} · ${numAgents} agents`;
+                else if (isCompleted) statusLine = `${completedRuns} runs completed`;
+                else if (isPending && exp.current_run >= 0) statusLine = `${completedRuns}/${exp.total_runs} done`;
+                else statusLine = `${exp.total_runs} runs · ${numAgents} agents each`;
 
                 // Completed runs summary
                 let runsSummary = '';
@@ -525,29 +510,7 @@ async function refreshExperiments() {
                     ).join('');
                 }
 
-                const currentRun = exp.runs.find(r => r.status === 'running');
-                const numAgents = currentRun?.num_agents || exp.runs[0]?.num_agents || 0;
-                const isRunning = exp.status === 'running';
-                const isCompleted = exp.status === 'completed';
-                const isPending = exp.status === 'pending';
-                const runNum = exp.current_run >= 0 ? exp.current_run + 1 : 0;
-
-                // Run progress dots
-                const dots = exp.runs.map((r, i) => {
-                    if (r.status === 'completed') return `<span style="color:var(--green)" title="Run ${i+1}: done">●</span>`;
-                    if (r.status === 'running') return `<span style="color:var(--accent)" title="Run ${i+1}: running">●</span>`;
-                    if (r.status === 'failed') return `<span style="color:var(--red)" title="Run ${i+1}: failed">●</span>`;
-                    return `<span style="color:var(--text-muted)" title="Run ${i+1}: pending">○</span>`;
-                }).join(' ');
-
-                // Status line
-                let statusLine = '';
-                if (isRunning) statusLine = `Run ${runNum} of ${exp.total_runs} · ${numAgents} agents`;
-                else if (isCompleted) statusLine = `${completedRuns} runs completed`;
-                else if (isPending && exp.current_run >= 0) statusLine = `${completedRuns}/${exp.total_runs} done`;
-                else statusLine = `${exp.total_runs} runs · ${numAgents} agents each`;
-
-                // Buttons
+                // Buttons — include pause for running experiments
                 let buttons = '';
                 if (isPending && exp.current_run < 0)
                     buttons = `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
@@ -555,11 +518,6 @@ async function refreshExperiments() {
                     <button class="btn btn-secondary btn-sm" id="pause-btn-${exp.pipeline_name}" onclick="togglePause('${exp.pipeline_name}')">⏸ Pause</button>
                     <button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
                 if (isCompleted) buttons = `<span style="color:var(--green)">✓ DONE</span>`;
-
-                // Completed runs summary
-                let runsSummary = exp.runs.filter(r => r.status === 'completed').map(r =>
-                    `<div style="font-size:0.7rem;color:var(--text-muted);margin-left:24px">✓ Run ${r.run_index+1}${r.tasks_completed != null ? ` · ${r.tasks_completed}/${r.tasks_total||'?'} tasks` : ''}</div>`
-                ).join('');
 
                 html += `<div class="exp-card" id="card-${exp.pipeline_name}">
                     <div class="exp-header">
