@@ -124,10 +124,41 @@
         .exp-meta { display: flex; gap: 20px; color: var(--text-muted); font-size: 0.8rem; }
 
         /* Agent output panels */
-        .agent-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 10px; margin-top: 16px;
+        .agent-grid { margin-top: 12px; }
+        .agent-summary {
+            display: flex; align-items: center; gap: 10px;
+            padding: 6px 12px; font-size: 0.8rem; border-bottom: 1px solid var(--border);
         }
+        .agent-summary:last-child { border-bottom: none; }
+        .agent-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .agent-dot-green { background: var(--green); }
+        .agent-dot-yellow { background: var(--yellow); }
+        .agent-dot-red { background: var(--red); }
+        .agent-dot-gray { background: var(--text-muted); }
+        .agent-summary-name { font-weight: 600; min-width: 120px; }
+        .agent-summary-task { color: var(--text-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .agent-summary-time { color: var(--text-muted); font-size: 0.7rem; }
+
+        /* Tabbed terminal */
+        .term-tabs {
+            display: flex; gap: 2px; margin-top: 12px;
+            border-bottom: 1px solid var(--border); padding: 0 4px;
+        }
+        .term-tab {
+            padding: 6px 14px; background: none; border: none; color: var(--text-muted);
+            cursor: pointer; font-size: 0.75rem; border-bottom: 2px solid transparent;
+            font-family: inherit;
+        }
+        .term-tab:hover { color: var(--text); }
+        .term-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .term-container {
+            background: var(--bg); border: 1px solid var(--border);
+            border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+            min-height: 60px; max-height: 350px; overflow: hidden;
+        }
+        .term-container.collapsed { display: none; }
+
+        /* Legacy compat */
         .agent-panel {
             background: var(--bg); border: 1px solid var(--border);
             border-radius: var(--radius); overflow: hidden;
@@ -138,11 +169,6 @@
             font-size: 0.8rem;
         }
         .agent-panel-header .agent-name { font-weight: 600; }
-        .agent-output {
-            padding: 8px 12px; font-size: 0.75rem; line-height: 1.4;
-            max-height: 300px; overflow-y: auto; white-space: pre-wrap;
-            word-break: break-all; color: var(--text-muted);
-        }
 
         /* Optimize stats */
         .stats-grid {
@@ -469,27 +495,12 @@ async function refreshExperiments() {
                     return `<span style="color:var(--text-muted)" title="Run ${i+1}: pending">○</span>`;
                 }).join(' ');
 
-                // Header line
-                let headerRight = '';
-                if (isRunning) {
-                    headerRight = `<button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
-                } else if (isPending && exp.current_run < 0) {
-                    headerRight = `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
-                } else if (isCompleted) {
-                    headerRight = `<span style="color:var(--green)">COMPLETED</span>`;
-                }
-
                 // Status line
                 let statusLine = '';
-                if (isRunning) {
-                    statusLine = `Run ${runNum} of ${exp.total_runs} · ${numAgents} agents`;
-                } else if (isCompleted) {
-                    statusLine = `${completedRuns} runs completed`;
-                } else if (isPending && exp.current_run >= 0) {
-                    statusLine = `${completedRuns}/${exp.total_runs} runs done — ready for next`;
-                } else {
-                    statusLine = `${exp.total_runs} runs configured · ${numAgents} agents each`;
-                }
+                if (isRunning) statusLine = `Run ${runNum} of ${exp.total_runs} · ${numAgents} agents`;
+                else if (isCompleted) statusLine = `${completedRuns} runs completed`;
+                else if (isPending && exp.current_run >= 0) statusLine = `${completedRuns}/${exp.total_runs} done`;
+                else statusLine = `${exp.total_runs} runs · ${numAgents} agents each`;
 
                 // Completed runs summary
                 let runsSummary = '';
@@ -499,26 +510,29 @@ async function refreshExperiments() {
                     ).join('');
                 }
 
+                // Buttons — include pause for running experiments
+                let buttons = '';
+                if (isPending && exp.current_run < 0)
+                    buttons = `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
+                if (isRunning) buttons = `
+                    <button class="btn btn-secondary btn-sm" id="pause-btn-${exp.pipeline_name}" onclick="togglePause('${exp.pipeline_name}')">⏸ Pause</button>
+                    <button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
+                if (isCompleted) buttons = `<span style="color:var(--green)">✓ DONE</span>`;
+
                 html += `<div class="exp-card" id="card-${exp.pipeline_name}">
                     <div class="exp-header">
                         <div>
                             <strong>${exp.pipeline_name}</strong>
                             <span class="badge badge-${exp.status}" style="margin-left:8px">${exp.status}</span>
                         </div>
-                        <div class="btn-group" style="margin:0">
-                            ${tmux ? `<button class="btn btn-secondary btn-sm" onclick="copyTmux('${tmux}')">tmux attach</button>` : ''}
-                            ${isRunning ? `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>` : ''}
-                            ${headerRight}
-                        </div>
+                        <div class="btn-group" style="margin:0">${buttons}</div>
                     </div>
-                    <div class="exp-meta">
-                        <span>${statusLine}</span>
-                    </div>
-                    <div style="margin-top:8px;font-size:0.85rem;letter-spacing:2px">${dots}</div>
+                    <div class="exp-meta"><span>${statusLine}</span></div>
+                    <div style="margin:8px 0;font-size:0.85rem;letter-spacing:2px">${dots}</div>
                     ${runsSummary}
-                    ${tmux ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:6px;font-family:monospace">tmux attach -t "${tmux}"</div>` : ''}
                     <div class="task-strip" id="tasks-${exp.pipeline_name}"></div>
-                    <div class="agent-grid" id="output-${exp.pipeline_name}"></div>
+                    <div class="agent-grid" id="agents-${exp.pipeline_name}"></div>
+                    <div id="term-section-${exp.pipeline_name}"></div>
                 </div>`;
             }
             container.innerHTML = html;
@@ -529,6 +543,7 @@ async function refreshExperiments() {
             if (exp.status === 'running') {
                 fetchPanesAndRenderTerminals(exp.pipeline_name);
                 fetchTaskMetrics(exp.pipeline_name);
+                syncPauseState(exp.pipeline_name);
             }
         }
     } catch (err) { console.error('Refresh failed:', err); }
@@ -542,33 +557,81 @@ async function fetchPanesAndRenderTerminals(name) {
         const resp = await fetch(`/api/experiments/${name}/output`);
         if (!resp.ok) return;
         const panes = await resp.json();
-        const container = document.getElementById('output-' + name);
-        if (!container) return;
 
-        // Only create terminal elements once
-        if (!activeTerminals[name]) {
+        // Agent summary lines (status card)
+        // Derive clean names from pane title + role detection
+        const agentContainer = document.getElementById('agents-' + name);
+        if (agentContainer) {
+            let workerNum = 0;
+            agentContainer.innerHTML = panes.map((p, i) => {
+                const raw = (p.title || '').toLowerCase();
+                const isMonitor = raw.includes('monitor');
+                const isCreator = raw.includes('creator') || raw.includes('project') || (i === 0 && !raw.includes('unicorn') && !raw.includes('monitor'));
+                const isWorker = !isMonitor && !isCreator;
+
+                let displayName, role, dotColor;
+                if (isMonitor) {
+                    displayName = 'Monitor';
+                    role = '📊';
+                    dotColor = p.status === 'running' ? 'yellow' : 'gray';
+                } else if (isCreator) {
+                    displayName = 'Project Creator';
+                    role = '📋';
+                    dotColor = p.status === 'running' ? 'yellow' : 'gray';
+                } else {
+                    workerNum++;
+                    displayName = `Worker ${workerNum}`;
+                    role = '🔧';
+                    dotColor = p.status === 'running' ? 'green' : p.status === 'exited' ? 'gray' : 'yellow';
+                }
+
+                return `<div class="agent-summary">
+                    <span class="agent-dot agent-dot-${dotColor}"></span>
+                    <span class="agent-summary-name">${role} ${displayName}</span>
+                    <span class="agent-summary-task">${p.status === 'running' ? 'active' : p.status}</span>
+                </div>`;
+            }).join('');
+        }
+
+        // Tabbed terminal section (only create once)
+        const termSection = document.getElementById('term-section-' + name);
+        if (termSection && !activeTerminals[name]) {
             activeTerminals[name] = {};
-            container.innerHTML = panes.map((p, i) => `
-                <div class="agent-panel">
-                    <div class="agent-panel-header">
-                        <span class="agent-name">${p.title || 'Pane '+i}</span>
-                        <span class="badge badge-${p.status}" id="status-${name}-${i}">${p.status}</span>
-                        <button class="btn btn-secondary btn-sm" onclick="connectTerminal('${name}', ${i})" id="conn-btn-${name}-${i}">Connect</button>
+            let tabWorkerNum = 0;
+            const tabs = panes.map((p, i) => {
+                const raw = (p.title || '').toLowerCase();
+                const isMon = raw.includes('monitor');
+                const isCre = raw.includes('creator') || raw.includes('project') || (i === 0 && !raw.includes('unicorn') && !raw.includes('monitor'));
+                let label;
+                if (isMon) label = '📊 Monitor';
+                else if (isCre) label = '📋 Creator';
+                else { tabWorkerNum++; label = `🔧 Worker ${tabWorkerNum}`; }
+                return `<button class="term-tab${i===0?' active':''}" onclick="switchTab('${name}',${i})">${label}</button>`;
+            }).join('');
+
+            const panels = panes.map((p, i) =>
+                `<div id="termpanel-${name}-${i}" class="term-container${i>0?' collapsed':''}">
+                    <div style="padding:8px;display:flex;justify-content:flex-end">
+                        <button class="btn btn-secondary btn-sm" onclick="connectTerminal('${name}',${i})" id="conn-btn-${name}-${i}">Connect</button>
                     </div>
                     <div id="term-${name}-${i}" style="height:300px;background:#1a1b26"></div>
-                </div>
-            `).join('');
-        } else {
-            // Just update status badges
-            panes.forEach((p, i) => {
-                const badge = document.getElementById(`status-${name}-${i}`);
-                if (badge) {
-                    badge.className = `badge badge-${p.status}`;
-                    badge.textContent = p.status;
-                }
-            });
+                </div>`
+            ).join('');
+
+            termSection.innerHTML = `<div class="term-tabs">${tabs}</div>${panels}`;
         }
     } catch (err) { /* silent */ }
+}
+
+function switchTab(name, idx) {
+    // Update tabs
+    document.querySelectorAll(`#term-section-${name} .term-tab`).forEach((t, i) => {
+        t.classList.toggle('active', i === idx);
+    });
+    // Show/hide panels
+    document.querySelectorAll(`[id^="termpanel-${name}-"]`).forEach((p, i) => {
+        p.classList.toggle('collapsed', i !== idx);
+    });
 }
 
 function connectTerminal(name, paneIndex) {
@@ -705,6 +768,51 @@ async function stopExp(name) {
         if (resp.ok) { showToast('Stopped','success'); refreshExperiments(); }
         else { showToast('Failed to stop','error'); }
     } catch (err) { showToast(err.message,'error'); }
+}
+
+// Pause/Resume auto-advance
+const pausedPipelines = new Set();
+
+async function togglePause(name) {
+    const isPaused = pausedPipelines.has(name);
+    const endpoint = isPaused ? 'resume' : 'pause';
+    try {
+        const resp = await fetch(`/api/experiments/${name}/auto-advance/${endpoint}`, {method: 'POST'});
+        if (resp.ok) {
+            if (isPaused) {
+                pausedPipelines.delete(name);
+                showToast('Resumed — will advance to next run', 'success');
+            } else {
+                pausedPipelines.add(name);
+                showToast('Paused — tmux will stay alive after completion', 'success');
+            }
+            updatePauseButton(name);
+        }
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+function updatePauseButton(name) {
+    const btn = document.getElementById('pause-btn-' + name);
+    if (!btn) return;
+    if (pausedPipelines.has(name)) {
+        btn.textContent = '▶ Resume';
+        btn.className = 'btn btn-success btn-sm';
+    } else {
+        btn.textContent = '⏸ Pause';
+        btn.className = 'btn btn-secondary btn-sm';
+    }
+}
+
+// Sync pause state from server on refresh
+async function syncPauseState(name) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/auto-advance/status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.paused) pausedPipelines.add(name);
+        else pausedPipelines.delete(name);
+        updatePauseButton(name);
+    } catch (e) { /* silent */ }
 }
 
 // Optimize
