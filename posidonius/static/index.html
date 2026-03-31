@@ -512,12 +512,14 @@ async function refreshExperiments() {
 
                 // Buttons — include pause for running experiments
                 let buttons = '';
+                if (tmux) buttons += `<button class="btn btn-secondary btn-sm" onclick="copyTmux('${tmux}')">tmux attach</button>`;
+                if (isRunning) buttons += `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>`;
                 if (isPending && exp.current_run < 0)
-                    buttons = `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
-                if (isRunning) buttons = `
+                    buttons += `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
+                if (isRunning) buttons += `
                     <button class="btn btn-secondary btn-sm" id="pause-btn-${exp.pipeline_name}" onclick="togglePause('${exp.pipeline_name}')">⏸ Pause</button>
                     <button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
-                if (isCompleted) buttons = `<span style="color:var(--green)">✓ DONE</span>`;
+                if (isCompleted) buttons += `<span style="color:var(--green)">✓ DONE</span>`;
 
                 html += `<div class="exp-card" id="card-${exp.pipeline_name}">
                     <div class="exp-header">
@@ -530,6 +532,7 @@ async function refreshExperiments() {
                     <div class="exp-meta"><span>${statusLine}</span></div>
                     <div style="margin:8px 0;font-size:0.85rem;letter-spacing:2px">${dots}</div>
                     ${runsSummary}
+                    ${tmux ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:6px;font-family:monospace">tmux attach -t "${tmux}"</div>` : ''}
                     <div class="task-strip" id="tasks-${exp.pipeline_name}"></div>
                     <div class="agent-grid" id="agents-${exp.pipeline_name}"></div>
                     <div id="term-section-${exp.pipeline_name}"></div>
