@@ -601,21 +601,36 @@ async function fetchPanesAndRenderTerminals(name) {
         const panes = await resp.json();
 
         // Agent summary lines (status card)
+        // Derive clean names from pane title + role detection
         const agentContainer = document.getElementById('agents-' + name);
         if (agentContainer) {
+            let workerNum = 0;
             agentContainer.innerHTML = panes.map((p, i) => {
-                const title = p.title || `Pane ${i}`;
-                const isWorker = title.toLowerCase().includes('unicorn') || title.toLowerCase().includes('agent') || title.toLowerCase().includes('developer');
-                const isMonitor = title.toLowerCase().includes('monitor');
-                const isCreator = title.toLowerCase().includes('creator') || title.toLowerCase().includes('project');
-                const dotColor = p.status === 'running' ? (isWorker ? 'green' : 'yellow') :
-                                 p.status === 'exited' ? 'gray' : 'yellow';
-                const shortTitle = title.replace(/[✳⠐⠂·]*/g, '').trim().substring(0, 25);
-                const role = isMonitor ? '📊' : isCreator ? '📋' : '🔧';
+                const raw = (p.title || '').toLowerCase();
+                const isMonitor = raw.includes('monitor');
+                const isCreator = raw.includes('creator') || raw.includes('project') || (i === 0 && !raw.includes('unicorn') && !raw.includes('monitor'));
+                const isWorker = !isMonitor && !isCreator;
+
+                let displayName, role, dotColor;
+                if (isMonitor) {
+                    displayName = 'Monitor';
+                    role = '📊';
+                    dotColor = p.status === 'running' ? 'yellow' : 'gray';
+                } else if (isCreator) {
+                    displayName = 'Project Creator';
+                    role = '📋';
+                    dotColor = p.status === 'running' ? 'yellow' : 'gray';
+                } else {
+                    workerNum++;
+                    displayName = `Worker ${workerNum}`;
+                    role = '🔧';
+                    dotColor = p.status === 'running' ? 'green' : p.status === 'exited' ? 'gray' : 'yellow';
+                }
+
                 return `<div class="agent-summary">
                     <span class="agent-dot agent-dot-${dotColor}"></span>
-                    <span class="agent-summary-name">${role} ${shortTitle}</span>
-                    <span class="agent-summary-task">${p.status}</span>
+                    <span class="agent-summary-name">${role} ${displayName}</span>
+                    <span class="agent-summary-task">${p.status === 'running' ? 'active' : p.status}</span>
                 </div>`;
             }).join('');
         }
@@ -624,8 +639,15 @@ async function fetchPanesAndRenderTerminals(name) {
         const termSection = document.getElementById('term-section-' + name);
         if (termSection && !activeTerminals[name]) {
             activeTerminals[name] = {};
+            let tabWorkerNum = 0;
             const tabs = panes.map((p, i) => {
-                const label = (p.title || `Pane ${i}`).replace(/[✳⠐⠂·]*/g, '').trim().substring(0, 20);
+                const raw = (p.title || '').toLowerCase();
+                const isMon = raw.includes('monitor');
+                const isCre = raw.includes('creator') || raw.includes('project') || (i === 0 && !raw.includes('unicorn') && !raw.includes('monitor'));
+                let label;
+                if (isMon) label = '📊 Monitor';
+                else if (isCre) label = '📋 Creator';
+                else { tabWorkerNum++; label = `🔧 Worker ${tabWorkerNum}`; }
                 return `<button class="term-tab${i===0?' active':''}" onclick="switchTab('${name}',${i})">${label}</button>`;
             }).join('');
 
