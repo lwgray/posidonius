@@ -256,13 +256,8 @@
             </div>
             <div style="margin-top:16px">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                    <label style="margin:0">Runs (Sequential)</label>
-                    <div style="display:flex;align-items:center;gap:12px">
-                        <label style="display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;color:var(--text-muted);margin:0;cursor:pointer">
-                            <input type="checkbox" id="auto-advance" checked> Auto-advance
-                        </label>
-                        <button type="button" class="btn btn-secondary btn-sm" id="add-run">+ Add Run</button>
-                    </div>
+                    <label style="margin:0">Runs (Sequential — auto-advances)</label>
+                    <button type="button" class="btn btn-secondary btn-sm" id="add-run">+ Add Run</button>
                 </div>
                 <div id="runs-list"></div>
             </div>
@@ -392,7 +387,6 @@ function buildPayload() {
         default_skills: Array.from(selectedSkills),
         timeout_project_creation: parseInt(document.getElementById('timeout').value),
         runs: runs.map(r => ({num_agents: r.num_agents, subagents_per_agent: r.subagents})),
-        auto_advance: document.getElementById('auto-advance').checked,
     };
 }
 
@@ -421,15 +415,11 @@ async function createPipeline(autoStart) {
             showToast('Experiment created!', 'success');
         }
 
-        // Register for auto-advance if enabled
-        if (payload.auto_advance) {
-            autoAdvancePipelines.add(resolvedName);
-        }
-
         if (autoStart) {
-            const startResp = await fetch(`/api/experiments/${resolvedName}/start`, {method:'POST'});
+            // Always use start-all for server-side auto-advance
+            const startResp = await fetch(`/api/experiments/${resolvedName}/start-all`, {method:'POST'});
             if (startResp.ok) {
-                showToast('Agents spawning...', 'success');
+                showToast('Pipeline started — auto-advance enabled', 'success');
             } else {
                 const e = await startResp.json();
                 showToast(e.detail||'Failed to start','error');
@@ -463,8 +453,51 @@ async function refreshExperiments() {
             let html = '';
             for (const exp of data) {
                 const completedRuns = exp.runs.filter(r => r.status === 'completed').length;
-                const progress = exp.total_runs > 0 ? (completedRuns / exp.total_runs * 100) : 0;
-                const tmux = exp.runs.find(r => r.tmux_session)?.tmux_session || '';
+                const currentRun = exp.runs.find(r => r.status === 'running');
+                const tmux = currentRun?.tmux_session || exp.runs.find(r => r.tmux_session)?.tmux_session || '';
+                const numAgents = currentRun?.num_agents || exp.runs[0]?.num_agents || 0;
+                const isRunning = exp.status === 'running';
+                const isCompleted = exp.status === 'completed';
+                const isPending = exp.status === 'pending';
+                const runNum = exp.current_run >= 0 ? exp.current_run + 1 : 0;
+
+                // Run progress dots
+                const dots = exp.runs.map((r, i) => {
+                    if (r.status === 'completed') return `<span style="color:var(--green)" title="Run ${i+1}: completed">●</span>`;
+                    if (r.status === 'running') return `<span style="color:var(--accent)" title="Run ${i+1}: running">●</span>`;
+                    if (r.status === 'failed') return `<span style="color:var(--red)" title="Run ${i+1}: failed">●</span>`;
+                    return `<span style="color:var(--text-muted)" title="Run ${i+1}: pending">○</span>`;
+                }).join(' ');
+
+                // Header line
+                let headerRight = '';
+                if (isRunning) {
+                    headerRight = `<button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
+                } else if (isPending && exp.current_run < 0) {
+                    headerRight = `<button class="btn btn-success btn-sm" onclick="startAllRuns('${exp.pipeline_name}')">Start</button>`;
+                } else if (isCompleted) {
+                    headerRight = `<span style="color:var(--green)">COMPLETED</span>`;
+                }
+
+                // Status line
+                let statusLine = '';
+                if (isRunning) {
+                    statusLine = `Run ${runNum} of ${exp.total_runs} · ${numAgents} agents`;
+                } else if (isCompleted) {
+                    statusLine = `${completedRuns} runs completed`;
+                } else if (isPending && exp.current_run >= 0) {
+                    statusLine = `${completedRuns}/${exp.total_runs} runs done — ready for next`;
+                } else {
+                    statusLine = `${exp.total_runs} runs configured · ${numAgents} agents each`;
+                }
+
+                // Completed runs summary
+                let runsSummary = '';
+                if (completedRuns > 0) {
+                    runsSummary = exp.runs.filter(r => r.status === 'completed').map(r =>
+                        `<div style="font-size:0.7rem;color:var(--text-muted);margin-left:8px">✓ Run ${r.run_index + 1}${r.tasks_completed != null ? ` · ${r.tasks_completed}/${r.tasks_total || '?'} tasks` : ''}</div>`
+                    ).join('');
+                }
 
                 html += `<div class="exp-card" id="card-${exp.pipeline_name}">
                     <div class="exp-header">
@@ -474,21 +507,16 @@ async function refreshExperiments() {
                         </div>
                         <div class="btn-group" style="margin:0">
                             ${tmux ? `<button class="btn btn-secondary btn-sm" onclick="copyTmux('${tmux}')">tmux attach</button>` : ''}
-                            ${exp.status === 'running' ? `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>` : ''}
-                            ${exp.status === 'pending' && exp.current_run < 0 ? `<button class="btn btn-success btn-sm" onclick="startExp('${exp.pipeline_name}', 0)">Start</button>` : ''}
-                            ${exp.status === 'pending' && exp.current_run >= 0 && exp.current_run + 1 < exp.total_runs ? `<button class="btn btn-success btn-sm" onclick="startExp('${exp.pipeline_name}', ${exp.current_run + 1})">Start Run ${exp.current_run + 1}</button>` : ''}
-                            ${exp.status === 'running' ? `<button class="btn btn-warning btn-sm" onclick="completeRun('${exp.pipeline_name}', ${exp.current_run})">Complete Run</button>` : ''}
-                            ${exp.status === 'running' ? `<button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>` : ''}
+                            ${isRunning ? `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>` : ''}
+                            ${headerRight}
                         </div>
                     </div>
                     <div class="exp-meta">
-                        <span>Runs: ${completedRuns}/${exp.total_runs}</span>
-                        <span>Current: ${exp.current_run >= 0 ? 'Run '+exp.current_run : 'Not started'}</span>
-                        ${exp.runs.map(r => `<span>Run ${r.run_index}: ${r.num_agents} agents <span class="badge badge-${r.status}">${r.status}</span></span>`).join('')}
+                        <span>${statusLine}</span>
                     </div>
-                    ${tmux ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px">tmux attach -t "${tmux}"</div>` : ''}
-                    ${(() => { const rd = exp.runs.find(r => r.run_dir)?.run_dir; return rd ? `<div style="font-size:0.65rem;color:var(--text-muted);font-family:monospace;margin-top:3px">${rd}</div>` : ''; })()}
-                    <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
+                    <div style="margin-top:8px;font-size:0.85rem;letter-spacing:2px">${dots}</div>
+                    ${runsSummary}
+                    ${tmux ? `<div style="font-size:0.65rem;color:var(--text-muted);margin-top:6px;font-family:monospace">tmux attach -t "${tmux}"</div>` : ''}
                     <div class="task-strip" id="tasks-${exp.pipeline_name}"></div>
                     <div class="agent-grid" id="output-${exp.pipeline_name}"></div>
                 </div>`;
@@ -496,14 +524,11 @@ async function refreshExperiments() {
             container.innerHTML = html;
         }
 
-        // Set up terminal panels, task metrics, and auto-advance for running experiments
+        // Set up terminal panels and task metrics for running experiments
         for (const exp of data) {
             if (exp.status === 'running') {
                 fetchPanesAndRenderTerminals(exp.pipeline_name);
                 fetchTaskMetrics(exp.pipeline_name);
-                if (autoAdvancePipelines.has(exp.pipeline_name)) {
-                    checkAutoAdvance(exp.pipeline_name);
-                }
             }
         }
     } catch (err) { console.error('Refresh failed:', err); }
@@ -649,6 +674,19 @@ async function startExp(name, runIndex = 0) {
         if (resp.ok) { showToast(`Started run ${runIndex}!`,'success'); refreshExperiments(); }
         else { const e = await resp.json(); showToast(e.detail,'error'); }
     } catch (err) { showToast(err.message,'error'); }
+}
+
+async function startAllRuns(name) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/start-all`, {method:'POST'});
+        if (resp.ok) {
+            showToast('Pipeline started — runs will auto-advance', 'success');
+            refreshExperiments();
+        } else {
+            const e = await resp.json();
+            showToast(e.detail || 'Failed to start', 'error');
+        }
+    } catch (err) { showToast(err.message, 'error'); }
 }
 
 async function completeRun(name, runIndex) {

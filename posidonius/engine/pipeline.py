@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from posidonius.engine.event_log import PipelineEventLog
 from posidonius.engine.runner import ExperimentRunner
 from posidonius.engine.tmux import TmuxManager
 from posidonius.models import (
@@ -61,6 +62,7 @@ class ExperimentPipeline:
         self._run_start_times: dict[int, float] = {}
         self.tracker: Optional[MLflowTracker] = None
         self._auto_advance_active: bool = False
+        self.events = PipelineEventLog(base_dir, config.name)
         self._run_experiment_script = run_experiment_script or (
             Path.home()
             / "dev"
@@ -151,6 +153,15 @@ class ExperimentPipeline:
 
         tmux_session = self.runner.get_tmux_session_name(run_index)
 
+        self.events.log(
+            "RUN_STARTING",
+            f"Starting run {run_index} with "
+            f"{self.config.runs[run_index].num_agents} agents",
+            run_index=run_index,
+            tmux_session=tmux_session,
+            run_dir=str(run_dir),
+        )
+
         self.current_run_index = run_index
         self.active_tmux_session = tmux_session
         self.status = ExperimentStatus.RUNNING
@@ -187,6 +198,11 @@ class ExperimentPipeline:
                     stderr=subprocess.DEVNULL,
                 )
             except OSError as e:
+                self.events.log(
+                    "RUN_FAILED",
+                    f"Failed to launch subprocess: {e}",
+                    run_index=run_index,
+                )
                 self.run_statuses[run_index]["status"] = ExperimentStatus.FAILED
                 self.run_statuses[run_index]["error"] = str(e)
                 self.status = ExperimentStatus.FAILED
@@ -196,16 +212,38 @@ class ExperimentPipeline:
             # trust prompts repeatedly. Agents spawn at different times
             # so trust prompts can appear after the session is already up.
             session_found = False
-            for _ in range(30):
+            for attempt in range(30):
                 time.sleep(2)
                 if self.tmux.session_exists(tmux_session):
                     session_found = True
-                    self.tmux.auto_confirm_trust(tmux_session)
+                    self.events.log(
+                        "TMUX_SESSION_FOUND",
+                        f"Session {tmux_session} detected after "
+                        f"{(attempt + 1) * 2}s",
+                        run_index=run_index,
+                    )
+                    confirmed = self.tmux.auto_confirm_trust(
+                        tmux_session
+                    )
+                    if confirmed:
+                        self.events.log(
+                            "TRUST_CONFIRMED",
+                            f"Confirmed {confirmed} trust prompt(s)",
+                            run_index=run_index,
+                            count=confirmed,
+                        )
                     break
+
+            if not session_found:
+                self.events.log(
+                    "TMUX_SESSION_TIMEOUT",
+                    f"Session {tmux_session} not found after 60s",
+                    run_index=run_index,
+                )
 
             # Keep polling for late trust prompts for 60 more seconds
             if session_found:
-                for _ in range(12):
+                for poll in range(12):
                     time.sleep(5)
                     self.tmux.auto_confirm_trust(tmux_session)
 
@@ -238,8 +276,19 @@ class ExperimentPipeline:
         tmux_session : str
             Tmux session name to kill.
         """
+        elapsed = time.time() - self._run_start_times.get(
+            run_index, time.time()
+        )
+
+        self.events.log(
+            "RUN_TEARDOWN",
+            f"Tearing down run {run_index} after {elapsed:.0f}s",
+            run_index=run_index,
+            tmux_session=tmux_session,
+            elapsed_seconds=round(elapsed, 1),
+        )
+
         if self.tracker is not None:
-            elapsed = time.time() - self._run_start_times.get(run_index, time.time())
             run_info = self.run_statuses.get(run_index, {})
             self.tracker.log_run_metrics(
                 completion_time_seconds=elapsed,
@@ -268,6 +317,11 @@ class ExperimentPipeline:
 
     def complete_pipeline(self) -> None:
         """Mark pipeline as complete and end the parent MLflow run."""
+        self.events.log(
+            "PIPELINE_FINISHING",
+            f"Completing pipeline with "
+            f"{len(self.run_statuses)} runs",
+        )
         if self.tracker is not None:
             self.tracker.end_pipeline_run(status="FINISHED")
         self.status = ExperimentStatus.COMPLETED
@@ -290,12 +344,32 @@ class ExperimentPipeline:
 
         def _loop() -> None:
             self._auto_advance_active = True
+            poll_count = 0
+            self.events.log(
+                "AUTO_ADVANCE_STARTED",
+                f"Polling every {poll_interval}s for completion",
+                poll_interval=poll_interval,
+                total_runs=len(self.config.runs),
+            )
             try:
                 while self.status == ExperimentStatus.RUNNING:
                     run_index = self.current_run_index
                     run_dir = self._run_dirs.get(run_index)
+                    poll_count += 1
 
                     if run_dir and self.is_run_complete(run_dir):
+                        elapsed = time.time() - self._run_start_times.get(
+                            run_index, time.time()
+                        )
+                        self.events.log(
+                            "COMPLETION_DETECTED",
+                            f"Run {run_index} complete after "
+                            f"{elapsed:.0f}s ({poll_count} polls)",
+                            run_index=run_index,
+                            elapsed_seconds=round(elapsed, 1),
+                            poll_count=poll_count,
+                        )
+
                         # Tear down current run (kills tmux + agents)
                         tmux_session = self.run_statuses.get(
                             run_index, {}
@@ -306,14 +380,46 @@ class ExperimentPipeline:
                         # Start next run or finish
                         next_index = run_index + 1
                         if next_index < len(self.config.runs):
+                            self.events.log(
+                                "ADVANCING",
+                                f"Starting run {next_index}",
+                                from_run=run_index,
+                                to_run=next_index,
+                            )
                             self.start_run(next_index)
+                            poll_count = 0
                         else:
+                            self.events.log(
+                                "PIPELINE_COMPLETE",
+                                f"All {len(self.config.runs)} runs finished",
+                            )
                             self.complete_pipeline()
                             break
+                    else:
+                        if poll_count % 10 == 0:
+                            # Log every 10th poll so we know it's alive
+                            self.events.log(
+                                "AUTO_ADVANCE_POLLING",
+                                f"Run {run_index}: poll #{poll_count}, "
+                                f"not complete yet",
+                                run_index=run_index,
+                                poll_count=poll_count,
+                                run_dir=str(run_dir) if run_dir else None,
+                            )
 
                     time.sleep(poll_interval)
+            except Exception as e:
+                self.events.log(
+                    "AUTO_ADVANCE_ERROR",
+                    f"Loop crashed: {e}",
+                    error=str(e),
+                )
             finally:
                 self._auto_advance_active = False
+                self.events.log(
+                    "AUTO_ADVANCE_STOPPED",
+                    f"Loop ended (status={self.status.value})",
+                )
 
         thread = threading.Thread(target=_loop, daemon=True)
         thread.start()
