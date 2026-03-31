@@ -529,6 +529,7 @@ async function refreshExperiments() {
             if (exp.status === 'running') {
                 fetchPanesAndRenderTerminals(exp.pipeline_name);
                 fetchTaskMetrics(exp.pipeline_name);
+                syncPauseState(exp.pipeline_name);
             }
         }
     } catch (err) { console.error('Refresh failed:', err); }
@@ -705,6 +706,51 @@ async function stopExp(name) {
         if (resp.ok) { showToast('Stopped','success'); refreshExperiments(); }
         else { showToast('Failed to stop','error'); }
     } catch (err) { showToast(err.message,'error'); }
+}
+
+// Pause/Resume auto-advance
+const pausedPipelines = new Set();
+
+async function togglePause(name) {
+    const isPaused = pausedPipelines.has(name);
+    const endpoint = isPaused ? 'resume' : 'pause';
+    try {
+        const resp = await fetch(`/api/experiments/${name}/auto-advance/${endpoint}`, {method: 'POST'});
+        if (resp.ok) {
+            if (isPaused) {
+                pausedPipelines.delete(name);
+                showToast('Resumed — will advance to next run', 'success');
+            } else {
+                pausedPipelines.add(name);
+                showToast('Paused — tmux will stay alive after completion', 'success');
+            }
+            updatePauseButton(name);
+        }
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+function updatePauseButton(name) {
+    const btn = document.getElementById('pause-btn-' + name);
+    if (!btn) return;
+    if (pausedPipelines.has(name)) {
+        btn.textContent = '▶ Resume';
+        btn.className = 'btn btn-success btn-sm';
+    } else {
+        btn.textContent = '⏸ Pause';
+        btn.className = 'btn btn-secondary btn-sm';
+    }
+}
+
+// Sync pause state from server on refresh
+async function syncPauseState(name) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/auto-advance/status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.paused) pausedPipelines.add(name);
+        else pausedPipelines.delete(name);
+        updatePauseButton(name);
+    } catch (e) { /* silent */ }
 }
 
 // Optimize
