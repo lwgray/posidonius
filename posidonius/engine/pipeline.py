@@ -46,6 +46,7 @@ class ExperimentPipeline:
         templates_dir: Path,
         base_dir: Path,
         run_experiment_script: Optional[Path] = None,
+        marcus_instance: Optional[dict[str, Any]] = None,
     ) -> None:
         self.config = config
         self.runner = ExperimentRunner(
@@ -73,6 +74,8 @@ class ExperimentPipeline:
             / "runners"
             / "run_experiment.py"
         )
+        # Optional: per-instance Marcus URL and DB path for parallel experiments
+        self._marcus_instance: Optional[dict[str, Any]] = marcus_instance
 
     def get_status(self) -> PipelineStatus:
         """Get current pipeline status.
@@ -185,6 +188,17 @@ class ExperimentPipeline:
             "mlflow_run_id": child_run_id,
         }
 
+        # Build env for subprocess: inherit current env, then inject
+        # per-instance Marcus URL and DB path when running in parallel mode.
+        import os
+
+        run_env: Optional[dict[str, str]] = None
+        if self._marcus_instance:
+            run_env = dict(os.environ)
+            run_env["MARCUS_URL"] = self._marcus_instance["url"]
+            if "db_path" in self._marcus_instance:
+                run_env["SQLITE_KANBAN_DB_PATH"] = self._marcus_instance["db_path"]
+
         # Launch via subprocess to run_experiment.py, then auto-confirm
         # any trust prompts that appear in agent panes.
         def _launch_and_confirm_trust() -> None:
@@ -197,6 +211,7 @@ class ExperimentPipeline:
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=run_env,
                 )
             except OSError as e:
                 self.events.log(

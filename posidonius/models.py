@@ -7,7 +7,7 @@ agent configurations, and status tracking.
 """
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -109,7 +109,7 @@ class PipelineConfig(BaseModel):
     )
     runs: list[ExperimentRunConfig] = Field(min_length=1)
     base_experiment_dir: Optional[str] = None
-    timeout_project_creation: int = 300
+    timeout_project_creation: int = 600
     timeout_agent_startup: int = 60
     auto_advance: bool = False
 
@@ -122,6 +122,45 @@ class PipelineConfig(BaseModel):
             msg = f"complexity must be one of {valid}, got '{v}'"
             raise ValueError(msg)
         return v
+
+
+class MarcusInstance(BaseModel):
+    """Configuration for one parallel Marcus MCP instance.
+
+    Attributes
+    ----------
+    url : str
+        HTTP URL of the Marcus MCP endpoint (e.g. http://localhost:4299/mcp).
+    db_path : str | None
+        SQLite DB path for this instance (sets SQLITE_KANBAN_DB_PATH).
+    port : int | None
+        Port number (informational; URL is the authoritative endpoint).
+    """
+
+    url: str
+    db_path: Optional[str] = None
+    port: Optional[int] = None
+
+
+class BatchParallelRequest(BaseModel):
+    """Request to launch N experiments in parallel across N Marcus instances.
+
+    Attributes
+    ----------
+    pipeline_config : PipelineConfig
+        Base pipeline config. Each parallel pipeline is a copy with a
+        unique name suffix (e.g. weather-dashboard-0, weather-dashboard-1).
+    marcus_instances : list[MarcusInstance]
+        One entry per parallel slot. Length determines N.
+    """
+
+    pipeline_config: PipelineConfig
+    marcus_instances: list[MarcusInstance]
+
+    def model_post_init(self, __context: Any) -> None:
+        """Validate at least one instance is provided."""
+        if not self.marcus_instances:
+            raise ValueError("marcus_instances must contain at least one entry")
 
 
 class OptimalAgentRequest(BaseModel):
