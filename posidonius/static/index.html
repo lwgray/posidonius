@@ -607,6 +607,8 @@ async function refreshExperiments() {
                 }
 
                 // Buttons — include pause for running experiments
+                const isFailed = exp.status === 'failed';
+                const isStopped = exp.status === 'stopped';
                 let buttons = '';
                 if (tmux) buttons += `<button class="btn btn-secondary btn-sm" onclick="copyTmux('${tmux}')">tmux attach</button>`;
                 if (isRunning) buttons += `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>`;
@@ -616,6 +618,7 @@ async function refreshExperiments() {
                     <button class="btn btn-secondary btn-sm" id="pause-btn-${exp.pipeline_name}" onclick="togglePause('${exp.pipeline_name}')">⏸ Pause</button>
                     <button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
                 if (isCompleted) buttons += `<span style="color:var(--green)">✓ DONE</span>`;
+                if (isFailed || isStopped) buttons += `<button class="btn btn-secondary btn-sm" onclick="dismissExp('${exp.pipeline_name}')">Dismiss</button>`;
 
                 html += `<div class="exp-card" id="card-${exp.pipeline_name}">
                     <div class="exp-header">
@@ -886,6 +889,14 @@ async function stopExp(name) {
         const resp = await fetch(`/api/experiments/${name}`, {method:'DELETE'});
         if (resp.ok) { showToast('Stopped','success'); refreshExperiments(); }
         else { showToast('Failed to stop','error'); }
+    } catch (err) { showToast(err.message,'error'); }
+}
+
+async function dismissExp(name) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/dismiss`, {method:'DELETE'});
+        if (resp.ok) { showToast(`"${name}" dismissed`,'success'); refreshExperiments(); }
+        else { showToast('Failed to dismiss','error'); }
     } catch (err) { showToast(err.message,'error'); }
 }
 

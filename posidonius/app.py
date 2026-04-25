@@ -870,6 +870,33 @@ def create_app(
         pipeline.stop()
         return pipeline.get_status().model_dump()
 
+    @app.delete("/api/experiments/{name}/dismiss")
+    def dismiss_experiment(name: str) -> dict[str, Any]:
+        """Remove a stopped or failed pipeline from the active list.
+
+        Stops the pipeline if still running, then removes it from
+        memory so it no longer appears in the Running tab.
+
+        Parameters
+        ----------
+        name : str
+            Pipeline name.
+
+        Returns
+        -------
+        dict[str, Any]
+            Confirmation with the dismissed pipeline name.
+        """
+        if name not in pipelines:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{name}' not found",
+            )
+        pipeline = pipelines[name]
+        pipeline.stop()
+        del pipelines[name]
+        return {"dismissed": name}
+
     @app.post("/api/experiments/optimize")
     def optimize_agents(
         request: OptimalAgentRequest,
