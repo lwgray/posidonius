@@ -22,6 +22,7 @@ from posidonius.engine.optimizer import OptimalAgentOptimizer
 from posidonius.engine.pipeline import ExperimentPipeline
 from posidonius.engine.terminal import TmuxTerminalSession
 from posidonius.models import (
+    BatchParallelRequest,
     ExperimentStatus,
     OptimalAgentRequest,
     PipelineConfig,
@@ -165,6 +166,51 @@ def create_app(
         )
         pipelines[config.name] = pipeline
         return pipeline.get_status().model_dump()
+
+    @app.post("/api/experiments/batch-parallel", status_code=201)
+    def create_batch_parallel(
+        request: BatchParallelRequest,
+    ) -> dict[str, Any]:
+        """Launch N experiments simultaneously across N Marcus instances.
+
+        Creates one independent pipeline per marcus_instance. Each pipeline
+        runs against its own Marcus MCP endpoint and SQLite DB, enabling
+        true parallel experiment isolation.
+
+        Parameters
+        ----------
+        request : BatchParallelRequest
+            Base pipeline config plus one Marcus instance config per parallel slot.
+
+        Returns
+        -------
+        dict[str, Any]
+            Summary with list of created pipeline statuses.
+        """
+        created = []
+        base_name = request.pipeline_config.name
+
+        for i, instance in enumerate(request.marcus_instances):
+            # Give each pipeline a unique name: base-0, base-1, ...
+            name = _deduplicate_name(f"{base_name}-{i}")
+
+            config = request.pipeline_config.model_copy(
+                update={
+                    "name": name,
+                    "project_name": f"{request.pipeline_config.project_name} (run {i})",
+                }
+            )
+
+            pipeline = ExperimentPipeline(
+                config=config,
+                templates_dir=templates_dir,
+                base_dir=experiments_dir / name,
+                marcus_instance=instance.model_dump(exclude_none=True),
+            )
+            pipelines[name] = pipeline
+            created.append(pipeline.get_status().model_dump())
+
+        return {"pipelines": created, "total": len(created)}
 
     @app.post("/api/experiments/{name}/start")
     def start_experiment(name: str, run_index: int = 0) -> dict[str, Any]:
@@ -316,9 +362,7 @@ def create_app(
         }
 
     @app.post("/api/experiments/{name}/auto-advance")
-    def start_auto_advance(
-        name: str, poll_interval: int = 30
-    ) -> dict[str, Any]:
+    def start_auto_advance(name: str, poll_interval: int = 30) -> dict[str, Any]:
         """Start auto-advance mode for the pipeline.
 
         Polls for experiment_complete.json every ``poll_interval``
@@ -363,9 +407,7 @@ def create_app(
         }
 
     @app.post("/api/experiments/{name}/start-all")
-    def start_all_runs(
-        name: str, poll_interval: int = 30
-    ) -> dict[str, Any]:
+    def start_all_runs(name: str, poll_interval: int = 30) -> dict[str, Any]:
         """Start run 0 and enable auto-advance through all runs.
 
         Single call to kick off the entire pipeline hands-free.
@@ -793,9 +835,7 @@ def create_app(
             # so we only count tasks for this experiment
             project_id = None
             marcus_root = Path.home() / "dev" / "marcus"
-            projects_file = (
-                marcus_root / "data" / "marcus_state" / "projects.json"
-            )
+            projects_file = marcus_root / "data" / "marcus_state" / "projects.json"
             if projects_file.exists():
                 import json as _json
 
@@ -829,8 +869,7 @@ def create_app(
                 ).fetchone()
             else:
                 rows = conn.execute(
-                    "SELECT status, COUNT(*) AS cnt "
-                    "FROM tasks GROUP BY status"
+                    "SELECT status, COUNT(*) AS cnt " "FROM tasks GROUP BY status"
                 ).fetchall()
                 agents_row = conn.execute(
                     "SELECT COUNT(DISTINCT assigned_to) AS n "

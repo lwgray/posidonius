@@ -46,6 +46,7 @@ class ExperimentPipeline:
         templates_dir: Path,
         base_dir: Path,
         run_experiment_script: Optional[Path] = None,
+        marcus_instance: Optional[dict[str, Any]] = None,
     ) -> None:
         self.config = config
         self.runner = ExperimentRunner(
@@ -73,6 +74,8 @@ class ExperimentPipeline:
             / "runners"
             / "run_experiment.py"
         )
+        # Optional: per-instance Marcus URL and DB path for parallel experiments
+        self._marcus_instance: Optional[dict[str, Any]] = marcus_instance
 
     def get_status(self) -> PipelineStatus:
         """Get current pipeline status.
@@ -185,6 +188,17 @@ class ExperimentPipeline:
             "mlflow_run_id": child_run_id,
         }
 
+        # Build env for subprocess: inherit current env, then inject
+        # per-instance Marcus URL and DB path when running in parallel mode.
+        import os
+
+        run_env: Optional[dict[str, str]] = None
+        if self._marcus_instance:
+            run_env = dict(os.environ)
+            run_env["MARCUS_URL"] = self._marcus_instance["url"]
+            if "db_path" in self._marcus_instance:
+                run_env["SQLITE_KANBAN_DB_PATH"] = self._marcus_instance["db_path"]
+
         # Launch via subprocess to run_experiment.py, then auto-confirm
         # any trust prompts that appear in agent panes.
         def _launch_and_confirm_trust() -> None:
@@ -197,6 +211,7 @@ class ExperimentPipeline:
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=run_env,
                 )
             except OSError as e:
                 self.events.log(
@@ -223,9 +238,7 @@ class ExperimentPipeline:
                         f"{(attempt + 1) * 2}s",
                         run_index=run_index,
                     )
-                    confirmed = self.tmux.auto_confirm_trust(
-                        tmux_session
-                    )
+                    confirmed = self.tmux.auto_confirm_trust(tmux_session)
                     if confirmed:
                         self.events.log(
                             "TRUST_CONFIRMED",
@@ -267,6 +280,72 @@ class ExperimentPipeline:
             return []
         return self.tmux.capture_all_panes(self.active_tmux_session)
 
+    def _run_epictetus(self, run_index: int, tmux_session: Optional[str]) -> None:
+        """Run Epictetus audit while the tmux session is still alive.
+
+        Must be called BEFORE teardown_run() — Epictetus uses --session to
+        interrogate live agents and read terminal output. Blocks until the
+        audit subprocess exits so quality data is written before teardown
+        kills the session.
+
+        Parameters
+        ----------
+        run_index : int
+            Index of the run to audit.
+        tmux_session : str | None
+            Active tmux session name. Passed to Epictetus via --session.
+        """
+        run_dir = self._run_dirs.get(run_index)
+        if run_dir is None:
+            self.events.log(
+                "EPICTETUS_SKIPPED",
+                f"Run {run_index}: no run_dir tracked",
+                run_index=run_index,
+            )
+            return
+
+        impl_dir = run_dir / "implementation"
+        if not impl_dir.exists():
+            self.events.log(
+                "EPICTETUS_SKIPPED",
+                f"Run {run_index}: implementation/ not found at {impl_dir}",
+                run_index=run_index,
+            )
+            return
+
+        skill_input = f"/epictetus {impl_dir}"
+        if tmux_session:
+            skill_input += f" --session {tmux_session}"
+
+        self.events.log(
+            "EPICTETUS_STARTED",
+            f"Run {run_index}: auditing {impl_dir}",
+            run_index=run_index,
+            session=tmux_session,
+        )
+
+        result = subprocess.run(  # nosec B603
+            ["claude", "--dangerously-skip-permissions", "--print"],
+            input=skill_input,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=str(impl_dir),
+        )
+
+        if result.returncode == 0:
+            self.events.log(
+                "EPICTETUS_COMPLETE",
+                f"Run {run_index}: audit done",
+                run_index=run_index,
+            )
+        else:
+            self.events.log(
+                "EPICTETUS_FAILED",
+                f"Run {run_index}: audit failed — {result.stderr[:200]}",
+                run_index=run_index,
+            )
+
     def teardown_run(self, run_index: int, tmux_session: str) -> None:
         """Clean up after a completed run, log metrics to MLflow.
 
@@ -277,9 +356,7 @@ class ExperimentPipeline:
         tmux_session : str
             Tmux session name to kill.
         """
-        elapsed = time.time() - self._run_start_times.get(
-            run_index, time.time()
-        )
+        elapsed = time.time() - self._run_start_times.get(run_index, time.time())
 
         self.events.log(
             "RUN_TEARDOWN",
@@ -320,8 +397,7 @@ class ExperimentPipeline:
         """Mark pipeline as complete and end the parent MLflow run."""
         self.events.log(
             "PIPELINE_FINISHING",
-            f"Completing pipeline with "
-            f"{len(self.run_statuses)} runs",
+            f"Completing pipeline with " f"{len(self.run_statuses)} runs",
         )
         if self.tracker is not None:
             self.tracker.end_pipeline_run(status="FINISHED")
@@ -376,10 +452,13 @@ class ExperimentPipeline:
                             poll_count=poll_count,
                         )
 
-                        # Tear down current run (kills tmux + agents)
-                        tmux_session = self.run_statuses.get(
-                            run_index, {}
-                        ).get("tmux_session")
+                        # Audit while tmux is still alive, then tear down.
+                        # Order is critical: Epictetus needs --session to
+                        # interrogate agents; teardown kills the session.
+                        tmux_session = self.run_statuses.get(run_index, {}).get(
+                            "tmux_session"
+                        )
+                        self._run_epictetus(run_index, tmux_session)
                         if tmux_session:
                             self.teardown_run(run_index, tmux_session)
 
