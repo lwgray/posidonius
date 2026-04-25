@@ -40,7 +40,15 @@ class TmuxTerminalSession:
         self._alive = True
 
     def resize(self, rows: int, cols: int) -> None:
-        """Update capture size on resize.
+        """Resize the tmux pane to match the browser viewport.
+
+        Updates ``self._rows`` for the capture window AND calls
+        ``tmux resize-pane`` so the running process inside the pane
+        reflows text to the new geometry. Without the actual resize,
+        Claude (or any TUI) inside the pane keeps rendering at the
+        original 200×50 spawn-time geometry while xterm.js renders
+        at the browser's fitted width — the captured snapshot then
+        looks stretched and out-of-line in the browser.
 
         Parameters
         ----------
@@ -50,6 +58,28 @@ class TmuxTerminalSession:
             Number of columns.
         """
         self._rows = rows
+        # Bound to sane minimums — tmux rejects very small panes
+        rows = max(rows, 5)
+        cols = max(cols, 20)
+        try:
+            subprocess.run(
+                [
+                    "tmux",
+                    "resize-pane",
+                    "-t",
+                    self.pane_target,
+                    "-x",
+                    str(cols),
+                    "-y",
+                    str(rows),
+                ],
+                capture_output=True,
+                timeout=2,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            # Best-effort; if tmux refuses (e.g., pane already gone)
+            # we still tracked the new row count for capture sizing.
+            pass
 
     def write(self, data: bytes) -> None:
         """Send input to the tmux pane via send-keys.

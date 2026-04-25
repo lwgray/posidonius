@@ -7,8 +7,17 @@ pre-flight estimation via Marcus MCP.
 
 import asyncio
 import io
+import json
+import logging
+import logging.handlers
+import os
+import socket
 import sqlite3
+import subprocess
+import sys
+import tempfile
 import time
+import urllib.parse
 import zipfile
 from pathlib import Path
 from typing import Any, Optional
@@ -24,14 +33,166 @@ from posidonius.engine.terminal import TmuxTerminalSession
 from posidonius.models import (
     BatchParallelRequest,
     ExperimentStatus,
+    MarcusInstance,
     OptimalAgentRequest,
     PipelineConfig,
 )
+
+_MARCUS_ROOT = Path.home() / "dev" / "marcus"
+
+
+def _port_is_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    """Check if a TCP port is already accepting connections.
+
+    Parameters
+    ----------
+    host : str
+        Hostname or IP address to check.
+    port : int
+        Port number to probe.
+    timeout : float
+        Connection timeout in seconds.
+
+    Returns
+    -------
+    bool
+        True if the port accepts a connection.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (ConnectionRefusedError, OSError):
+        return False
+
+
+_log = logging.getLogger(__name__)
+
+
+def _start_marcus_instance(
+    instance: MarcusInstance,
+    marcus_root: Path = _MARCUS_ROOT,
+    startup_timeout: int = 30,
+    log_dir: Optional[Path] = None,
+    python_executable: Optional[str] = None,
+) -> Optional[subprocess.Popen]:  # type: ignore[type-arg]
+    """Start a Marcus MCP server subprocess for the given instance.
+
+    If the instance has no port, or if the port is already open, returns
+    None without starting anything. Otherwise creates a temporary config
+    file with the correct port, spawns Marcus, and waits for the port
+    to become reachable.
+
+    Parameters
+    ----------
+    instance : MarcusInstance
+        Instance config. Must have ``port`` set for startup to occur.
+    marcus_root : Path
+        Path to the Marcus repository root (contains server module).
+    startup_timeout : int
+        Maximum seconds to wait for the port to open. Default 30.
+    log_dir : Path | None
+        Directory for per-instance stderr log files.  When set, Marcus
+        stderr is written to ``{log_dir}/marcus_{port}.log``.  When
+        None, stderr is discarded.
+    python_executable : str | None
+        Python interpreter to use.  Defaults to ``sys.executable``.
+        Override when Marcus lives in a different conda/venv environment
+        from Posidonius.
+
+    Returns
+    -------
+    subprocess.Popen | None
+        Running process handle, or None if startup was skipped.
+
+    Raises
+    ------
+    RuntimeError
+        If the server fails to become reachable within ``startup_timeout``.
+    """
+    if instance.port is None:
+        return None
+
+    parsed = urllib.parse.urlparse(instance.url)
+    host = parsed.hostname or "127.0.0.1"
+
+    if _port_is_open(host, instance.port):
+        return None  # Already running — skip startup
+
+    # Load base Marcus config and override transport port
+    config: dict[str, Any] = {}
+    for config_name in ("config_marcus.local.json", "config_marcus.json"):
+        config_path = marcus_root / config_name
+        if config_path.exists():
+            with open(config_path) as f:
+                config = json.load(f)
+            break
+
+    transport = config.setdefault("transport", {})
+    transport["type"] = "http"
+    transport["http_port"] = instance.port
+    transport.setdefault("http_host", "127.0.0.1")
+    transport.setdefault("http_path", "/mcp")
+    transport.setdefault("log_level", "warning")
+
+    # Write per-instance temp config
+    tmp_dir = Path(tempfile.mkdtemp())
+    tmp_config = tmp_dir / f"marcus_instance_{instance.port}.json"
+    with open(tmp_config, "w") as f:
+        json.dump(config, f)
+
+    env = dict(os.environ)
+    env["MARCUS_CONFIG"] = str(tmp_config)
+    if instance.db_path:
+        env["SQLITE_KANBAN_DB_PATH"] = instance.db_path
+
+    # Per-instance stderr log: each Marcus process gets its own file so
+    # startup errors and uvicorn tracebacks aren't silently dropped.
+    stderr_fh: Optional[io.BufferedWriter] = None
+    if log_dir is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"marcus_{instance.port}.log"
+        stderr_fh = open(log_path, "ab")  # noqa: SIM115
+        _log.info("Marcus port %d stderr → %s", instance.port, log_path)
+
+    python = python_executable or sys.executable
+    try:
+        proc: subprocess.Popen[bytes] = subprocess.Popen(
+            [python, "-m", "src.marcus_mcp.server", "--http"],
+            cwd=str(marcus_root),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_fh if stderr_fh is not None else subprocess.DEVNULL,
+        )
+    finally:
+        # Parent closes its copy; child process retains the fd.
+        if stderr_fh is not None:
+            stderr_fh.close()
+
+    _log.info("Marcus instance started (port %d, pid %d)", instance.port, proc.pid)
+
+    # Poll until port opens or timeout expires
+    for _ in range(startup_timeout):
+        time.sleep(1)
+        if _port_is_open(host, instance.port):
+            return proc
+
+    _log.error(
+        "Marcus instance on port %d (pid %d) failed to start within %ds",
+        instance.port,
+        proc.pid,
+        startup_timeout,
+    )
+    proc.terminate()
+    raise RuntimeError(
+        f"Marcus instance on port {instance.port} failed to start "
+        f"within {startup_timeout}s"
+    )
 
 
 def create_app(
     templates_dir: Optional[Path] = None,
     experiments_dir: Optional[Path] = None,
+    marcus_python: Optional[str] = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -41,6 +202,10 @@ def create_app(
         Path to experiment templates. Defaults to Marcus templates dir.
     experiments_dir : Path | None
         Base directory for experiment output. Defaults to ~/experiments.
+    marcus_python : str | None
+        Python interpreter used to spawn Marcus subprocesses.  Defaults
+        to ``sys.executable``.  Set this when Marcus is installed in a
+        different conda/venv environment from Posidonius.
 
     Returns
     -------
@@ -173,42 +338,124 @@ def create_app(
     ) -> dict[str, Any]:
         """Launch N experiments simultaneously across N Marcus instances.
 
-        Creates one independent pipeline per marcus_instance. Each pipeline
-        runs against its own Marcus MCP endpoint and SQLite DB, enabling
-        true parallel experiment isolation.
+        Starts one Marcus MCP server process per instance (if ``port`` is
+        set and the port is not already open), then creates one independent
+        pipeline per instance.  Each pipeline gets its own Marcus MCP
+        endpoint and SQLite DB for true parallel isolation.
 
         Parameters
         ----------
         request : BatchParallelRequest
-            Base pipeline config plus one Marcus instance config per parallel slot.
+            Base pipeline config plus one Marcus instance config per
+            parallel slot.
 
         Returns
         -------
         dict[str, Any]
             Summary with list of created pipeline statuses.
+
+        Raises
+        ------
+        HTTPException
+            503 if any Marcus instance fails to start.
         """
+        marcus_root = _MARCUS_ROOT
+        started_procs: list[subprocess.Popen[bytes]] = []
         created = []
         base_name = request.pipeline_config.name
+        log_dir = experiments_dir / "logs"
 
-        for i, instance in enumerate(request.marcus_instances):
-            # Give each pipeline a unique name: base-0, base-1, ...
-            name = _deduplicate_name(f"{base_name}-{i}")
+        try:
+            for i, instance in enumerate(request.marcus_instances):
+                # Start Marcus server if the instance specifies a port
+                try:
+                    proc = _start_marcus_instance(
+                        instance,
+                        marcus_root,
+                        log_dir=log_dir,
+                        python_executable=marcus_python,
+                    )
+                    if proc is not None:
+                        started_procs.append(proc)
+                except RuntimeError as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Marcus instance {i} (port {instance.port}) failed to start: {exc}",
+                    )
 
-            config = request.pipeline_config.model_copy(
-                update={
+                # Build slot label for pipeline name
+                slot_label = instance.label or (
+                    f"{instance.num_agents}a" if instance.num_agents else str(i)
+                )
+                name = _deduplicate_name(f"{base_name}-{slot_label}")
+
+                # project_name: use explicit override, else base-name + label suffix
+                effective_project_name = instance.project_name or (
+                    f"{request.pipeline_config.project_name} [{slot_label}]"
+                )
+
+                # Apply per-slot overrides on top of base pipeline config
+                overrides: dict[str, Any] = {
                     "name": name,
-                    "project_name": f"{request.pipeline_config.project_name} (run {i})",
+                    "project_name": effective_project_name,
                 }
-            )
+                if instance.complexity is not None:
+                    overrides["complexity"] = instance.complexity
+                if instance.project_spec is not None:
+                    overrides["project_spec"] = instance.project_spec
+                if instance.num_agents is not None:
+                    # Override num_agents in every run
+                    overrides["runs"] = [
+                        run.model_copy(update={"num_agents": instance.num_agents})
+                        for run in request.pipeline_config.runs
+                    ]
 
-            pipeline = ExperimentPipeline(
-                config=config,
-                templates_dir=templates_dir,
-                base_dir=experiments_dir / name,
-                marcus_instance=instance.model_dump(exclude_none=True),
-            )
-            pipelines[name] = pipeline
-            created.append(pipeline.get_status().model_dump())
+                config = request.pipeline_config.model_copy(update=overrides)
+                pipeline = ExperimentPipeline(
+                    config=config,
+                    templates_dir=templates_dir,
+                    base_dir=experiments_dir / name,
+                    marcus_instance=instance.model_dump(exclude_none=True),
+                )
+                pipelines[name] = pipeline
+                created.append(
+                    {
+                        **pipeline.get_status().model_dump(),
+                        "slot_label": slot_label,
+                        # Effective config values for this slot (after overrides applied)
+                        "config_agents": (
+                            config.runs[0].num_agents if config.runs else None
+                        ),
+                        "config_complexity": config.complexity,
+                        "overrides": {
+                            k: v
+                            for k, v in {
+                                "num_agents": instance.num_agents,
+                                "complexity": instance.complexity,
+                                "project_name": instance.project_name,
+                                "project_spec": (
+                                    instance.project_spec[:60] + "…"
+                                    if instance.project_spec
+                                    and len(instance.project_spec) > 60
+                                    else instance.project_spec
+                                ),
+                            }.items()
+                            if v is not None
+                        },
+                    }
+                )
+
+        except HTTPException:
+            # Terminate any Marcus processes we already started
+            for proc in started_procs:
+                proc.terminate()
+            raise
+
+        # Store process handles on app.state so they survive garbage collection
+        if not hasattr(app.state, "marcus_processes"):
+            app.state.marcus_processes = {}
+        for proc in started_procs:
+            app.state.marcus_processes[id(proc)] = proc
 
         return {"pipelines": created, "total": len(created)}
 
@@ -698,7 +945,10 @@ def create_app(
                     data = await term.read_async()
                     if data and data != last_content:
                         last_content = data
-                        await websocket.send_bytes(b"\x1b[2J\x1b[H" + data)
+                        try:
+                            await websocket.send_bytes(b"\x1b[2J\x1b[H" + data)
+                        except (WebSocketDisconnect, RuntimeError):
+                            break
                     await asyncio.sleep(0.5)
 
             read_task = asyncio.create_task(read_loop())
@@ -719,6 +969,8 @@ def create_app(
             try:
                 while True:
                     message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        break
                     if "bytes" in message:
                         raw = message["bytes"]
                         text = raw.decode("utf-8", errors="replace")
@@ -740,7 +992,7 @@ def create_app(
                         term.send_key(key_map[text])
                     else:
                         term.write(text.encode("utf-8"))
-            except WebSocketDisconnect:
+            except (WebSocketDisconnect, RuntimeError):
                 pass
             finally:
                 read_task.cancel()

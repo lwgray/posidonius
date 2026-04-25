@@ -281,19 +281,25 @@ class ExperimentPipeline:
         return self.tmux.capture_all_panes(self.active_tmux_session)
 
     def _run_epictetus(self, run_index: int, tmux_session: Optional[str]) -> None:
-        """Run Epictetus audit while the tmux session is still alive.
+        """Run Epictetus audit in a visible tmux pane while the session is alive.
+
+        Spawns a dedicated 'Epictetus' pane in the existing tmux session so
+        progress is visible (attach with ``tmux attach -t <session>`` or via
+        the Posidonius terminal viewer). Output is also written to
+        ``{run_dir}/epictetus.log``.
 
         Must be called BEFORE teardown_run() — Epictetus uses --session to
         interrogate live agents and read terminal output. Blocks until the
-        audit subprocess exits so quality data is written before teardown
-        kills the session.
+        audit pane exits so quality data is written before teardown kills
+        the session.
 
         Parameters
         ----------
         run_index : int
             Index of the run to audit.
         tmux_session : str | None
-            Active tmux session name. Passed to Epictetus via --session.
+            Active tmux session name. Required for pane creation; falls back
+            to a plain subprocess if None.
         """
         run_dir = self._run_dirs.get(run_index)
         if run_dir is None:
@@ -317,32 +323,198 @@ class ExperimentPipeline:
         if tmux_session:
             skill_input += f" --session {tmux_session}"
 
+        log_file = run_dir / "epictetus.log"
+
         self.events.log(
             "EPICTETUS_STARTED",
             f"Run {run_index}: auditing {impl_dir}",
             run_index=run_index,
             session=tmux_session,
+            log=str(log_file),
         )
 
+        if tmux_session and self.tmux.session_exists(tmux_session):
+            self._run_epictetus_in_tmux(
+                run_index, tmux_session, impl_dir, skill_input, log_file
+            )
+        else:
+            # Fallback: plain subprocess when no tmux session available
+            self._run_epictetus_subprocess(run_index, impl_dir, skill_input, log_file)
+
+    def _run_epictetus_in_tmux(
+        self,
+        run_index: int,
+        tmux_session: str,
+        impl_dir: Path,
+        skill_input: str,
+        log_file: Path,
+    ) -> None:
+        """Run Epictetus in a new tmux window within the existing session.
+
+        Parameters
+        ----------
+        run_index : int
+            Index of the run being audited.
+        tmux_session : str
+            Existing tmux session name.
+        impl_dir : Path
+            Implementation directory to audit.
+        skill_input : str
+            Skill invocation string piped to claude.
+        log_file : Path
+            Path for Epictetus log output.
+        """
+        # Write skill input to a temp file so the shell can read it cleanly
+        prompt_file = impl_dir.parent / "prompts" / "epictetus_input.txt"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text(skill_input)
+
+        script = (
+            "#!/bin/bash\n"
+            "[ -f ~/.zshrc ] && source ~/.zshrc\n"
+            "[ -f ~/.bashrc ] && source ~/.bashrc\n"
+            "unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION\n"
+            f'cd "{impl_dir}" || exit 1\n'
+            'echo "=========================================="\n'
+            'echo "EPICTETUS AUDIT"\n'
+            f'echo "Auditing: {impl_dir}"\n'
+            'echo "=========================================="\n'
+            f'claude --dangerously-skip-permissions --print < "{prompt_file}" '
+            f'| tee "{log_file}"\n'
+            'echo "=========================================="\n'
+            'echo "Epictetus Complete"\n'
+            'echo "=========================================="\n'
+        )
+        script_file = impl_dir.parent / "prompts" / "epictetus.sh"
+        script_file.write_text(script)
+        script_file.chmod(0o755)
+
+        # Spawn a new window in the session
         result = subprocess.run(  # nosec B603
-            ["claude", "--dangerously-skip-permissions", "--print"],
-            input=skill_input,
+            [
+                "tmux",
+                "new-window",
+                "-t",
+                tmux_session,
+                "-n",
+                "epictetus",
+                "-P",
+                "-F",
+                "#{pane_id}",
+            ],
             capture_output=True,
             text=True,
-            timeout=600,
-            cwd=str(impl_dir),
+        )
+        pane_id = result.stdout.strip()
+
+        if not pane_id:
+            self.events.log(
+                "EPICTETUS_FAILED",
+                f"Run {run_index}: could not create tmux window",
+                run_index=run_index,
+            )
+            self._run_epictetus_subprocess(run_index, impl_dir, skill_input, log_file)
+            return
+
+        subprocess.run(  # nosec B603
+            ["tmux", "select-pane", "-t", pane_id, "-T", "Epictetus"],
+            capture_output=True,
+        )
+        subprocess.run(  # nosec B603
+            ["tmux", "send-keys", "-t", pane_id, f"bash {script_file}", "Enter"],
+            capture_output=True,
         )
 
-        if result.returncode == 0:
+        # Poll until pane exits or timeout (30 min)
+        deadline = time.time() + 1800
+        while time.time() < deadline:
+            time.sleep(10)
+            dead = subprocess.run(  # nosec B603
+                ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_dead}"],
+                capture_output=True,
+                text=True,
+            )
+            if dead.stdout.strip() == "1":
+                break
+        else:
+            self.events.log(
+                "EPICTETUS_FAILED",
+                f"Run {run_index}: audit timed out after 1800s in tmux pane {pane_id}",
+                run_index=run_index,
+            )
+            return
+
+        # Check log for success signal
+        if log_file.exists() and "Epictetus Complete" in log_file.read_text():
             self.events.log(
                 "EPICTETUS_COMPLETE",
-                f"Run {run_index}: audit done",
+                f"Run {run_index}: audit done — see {log_file}",
                 run_index=run_index,
             )
         else:
             self.events.log(
                 "EPICTETUS_FAILED",
-                f"Run {run_index}: audit failed — {result.stderr[:200]}",
+                f"Run {run_index}: audit exited without completion signal",
+                run_index=run_index,
+            )
+
+    def _run_epictetus_subprocess(
+        self,
+        run_index: int,
+        impl_dir: Path,
+        skill_input: str,
+        log_file: Path,
+    ) -> None:
+        """Fallback: run Epictetus as a plain subprocess, output to log_file.
+
+        Parameters
+        ----------
+        run_index : int
+            Index of the run being audited.
+        impl_dir : Path
+            Implementation directory to audit.
+        skill_input : str
+            Skill invocation string piped to claude.
+        log_file : Path
+            Path to write stdout/stderr.
+        """
+        try:
+            with open(log_file, "wb") as lf:
+                proc = subprocess.Popen(  # nosec B603
+                    ["claude", "--dangerously-skip-permissions", "--print"],
+                    stdin=subprocess.PIPE,
+                    stdout=lf,
+                    stderr=lf,
+                    cwd=str(impl_dir),
+                )
+                try:
+                    proc.communicate(input=skill_input.encode(), timeout=1800)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                    self.events.log(
+                        "EPICTETUS_FAILED",
+                        f"Run {run_index}: subprocess audit timed out — partial log: {log_file}",
+                        run_index=run_index,
+                    )
+                    return
+
+            if proc.returncode == 0:
+                self.events.log(
+                    "EPICTETUS_COMPLETE",
+                    f"Run {run_index}: audit done — see {log_file}",
+                    run_index=run_index,
+                )
+            else:
+                self.events.log(
+                    "EPICTETUS_FAILED",
+                    f"Run {run_index}: audit failed (rc={proc.returncode}) — see {log_file}",
+                    run_index=run_index,
+                )
+        except Exception as exc:
+            self.events.log(
+                "EPICTETUS_FAILED",
+                f"Run {run_index}: unexpected error — {exc}",
                 run_index=run_index,
             )
 

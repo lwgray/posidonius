@@ -105,6 +105,48 @@ class TestExperimentRunner:
         assert len(config_dict["agents"]) == 2
         assert config_dict["project_options"]["complexity"] == "prototype"
 
+    def test_cpm_override_defaults_off(self, runner: ExperimentRunner) -> None:
+        """Default ``cpm_override`` must be False so controlled experiments
+        spawn exactly the configured agent count.
+        """
+        run_config = ExperimentRunConfig(num_agents=2)
+        agents = runner.generate_agents(run_config)
+        config_dict = runner.generate_config_dict(run_config, agents, 0)
+
+        assert config_dict["cpm_override"] is False, (
+            "Default must be OFF — controlled experiments use agent count "
+            "as the independent variable; CPM auto-sizing silently corrupts "
+            "the design."
+        )
+
+    def test_cpm_override_threads_through_when_set(self, tmp_path: Path) -> None:
+        """When PipelineConfig.cpm_override=True, runner config_dict must
+        propagate the flag to spawn_agents.py.
+        """
+        templates_dir = tmp_path / "templates"
+        templates_dir.mkdir()
+        (templates_dir / "config.yaml.template").write_text("template")
+        (templates_dir / "agent_prompt.md").write_text("prompt")
+        pipeline = PipelineConfig(
+            name="cpm-test",
+            project_name="CPM Test",
+            project_spec="Build a thing",
+            complexity="prototype",
+            runs=[ExperimentRunConfig(num_agents=2)],
+            cpm_override=True,
+        )
+        runner = ExperimentRunner(
+            pipeline=pipeline,
+            templates_dir=templates_dir,
+            base_dir=tmp_path / "experiments",
+        )
+
+        run_config = pipeline.runs[0]
+        agents = runner.generate_agents(run_config)
+        config_dict = runner.generate_config_dict(run_config, agents, 0)
+
+        assert config_dict["cpm_override"] is True
+
     @patch("posidonius.engine.runner.subprocess.run")
     def test_kill_tmux_session(self, mock_run: Mock, runner: ExperimentRunner) -> None:
         """Test clean tmux session teardown."""
