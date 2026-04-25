@@ -343,6 +343,7 @@ def create_app(
             config=config,
             templates_dir=templates_dir,
             base_dir=experiments_dir / config.name,
+            marcus_python=marcus_python,
         )
         pipelines[config.name] = pipeline
         return pipeline.get_status().model_dump()
@@ -431,6 +432,7 @@ def create_app(
                     templates_dir=templates_dir,
                     base_dir=experiments_dir / name,
                     marcus_instance=instance.model_dump(exclude_none=True),
+                    marcus_python=marcus_python,
                 )
                 pipelines[name] = pipeline
                 created.append(
@@ -712,6 +714,12 @@ def create_app(
             }
         except Exception as e:
             pipeline.status = ExperimentStatus.FAILED
+            # Log the full traceback so the failure is debuggable from
+            # posidonius.log alone — the HTTPException detail string
+            # truncates and goes only to the HTTP response body.
+            _log.exception(
+                "start-all failed for pipeline '%s': %s", name, e
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to start pipeline: {e}",

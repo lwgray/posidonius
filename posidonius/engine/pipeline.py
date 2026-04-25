@@ -6,7 +6,9 @@ Launches experiments via subprocess to run_experiment.py, communicating
 across process boundaries rather than importing Marcus internals.
 """
 
+import os
 import subprocess  # nosec B404
+import sys
 import threading
 import time
 from pathlib import Path
@@ -47,6 +49,7 @@ class ExperimentPipeline:
         base_dir: Path,
         run_experiment_script: Optional[Path] = None,
         marcus_instance: Optional[dict[str, Any]] = None,
+        marcus_python: Optional[str] = None,
     ) -> None:
         self.config = config
         self.runner = ExperimentRunner(
@@ -76,6 +79,9 @@ class ExperimentPipeline:
         )
         # Optional: per-instance Marcus URL and DB path for parallel experiments
         self._marcus_instance: Optional[dict[str, Any]] = marcus_instance
+        # Python interpreter to use when spawning run_experiment.py.
+        # Must match the env where Marcus is installed.
+        self._python_executable: str = marcus_python or sys.executable
 
     def get_status(self) -> PipelineStatus:
         """Get current pipeline status.
@@ -190,8 +196,6 @@ class ExperimentPipeline:
 
         # Build env for subprocess: inherit current env, then inject
         # per-instance Marcus URL and DB path when running in parallel mode.
-        import os
-
         run_env: Optional[dict[str, str]] = None
         if self._marcus_instance:
             run_env = dict(os.environ)
@@ -205,7 +209,7 @@ class ExperimentPipeline:
             try:
                 subprocess.Popen(  # nosec B603
                     [
-                        "python",
+                        self._python_executable,
                         str(self._run_experiment_script),
                         str(run_dir),
                     ],
