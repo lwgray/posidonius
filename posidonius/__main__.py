@@ -80,8 +80,11 @@ def main() -> None:
         help=(
             "Python interpreter for Marcus subprocesses "
             "(default: current interpreter). "
-            "Set this when Marcus lives in a different conda/venv env. "
-            'Example: --marcus-python "$(conda run -n <env> which python)"'
+            "Required when Marcus is installed in a different environment. "
+            "Examples: "
+            "conda: $(conda run -n <env> which python), "
+            "venv: /path/to/venv/bin/python, "
+            "pyenv: $(pyenv which python)"
         ),
     )
     args = parser.parse_args()
