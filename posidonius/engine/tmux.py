@@ -16,6 +16,14 @@ class TmuxManager:
     requiring manual tmux attachment.
     """
 
+    def __init__(self) -> None:
+        # Role cache: pane target → detected role.
+        # Roles are permanent (creator/monitor/worker never changes mid-run),
+        # so we cache the first definitive detection. This prevents
+        # "EXPERIMENT MONITOR" from being missed once the startup header
+        # scrolls past the capture_pane tail buffer.
+        self._pane_roles: dict[str, str] = {}
+
     def capture_pane(self, target: str, lines: int = 50) -> str:
         """Capture recent output from a tmux pane.
 
@@ -118,13 +126,28 @@ class TmuxManager:
         results: list[dict[str, Any]] = []
         for pane in panes:
             output = self.capture_pane(pane["target"])
+            target = pane["target"]
+
+            # Use cached role if already definitively identified.
+            # The startup header ("EXPERIMENT MONITOR", "PROJECT CREATOR AGENT")
+            # scrolls past the 50-line tail buffer after the experiment runs
+            # for a while. Once we detect a non-worker role, cache it
+            # permanently — roles never change mid-run.
+            cached = self._pane_roles.get(target)
+            if cached in ("creator", "monitor"):
+                role = cached
+            else:
+                role = self.detect_agent_role(output)
+                if role in ("creator", "monitor"):
+                    self._pane_roles[target] = role
+
             results.append(
                 {
-                    "target": pane["target"],
+                    "target": target,
                     "title": pane["title"],
                     "output": output,
                     "status": self.detect_agent_status(output),
-                    "role": self.detect_agent_role(output),
+                    "role": role,
                 }
             )
         return results

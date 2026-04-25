@@ -1110,7 +1110,7 @@ async function fetchTaskMetrics(name) {
             <span class="ts-sep">·</span>
             <span class="ts-stat ts-done"><strong>${m.pct}%</strong></span>
             <span class="ts-sep">·</span>
-            <span class="ts-stat ts-agents"><strong>${m.active_agents}</strong> agents</span>
+            <span class="ts-stat ts-agents"><strong>${m.active_agents}</strong> active</span>
             ${blockerHtml}
         `;
     } catch (e) { el.innerHTML = ''; }
