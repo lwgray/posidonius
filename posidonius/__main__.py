@@ -81,7 +81,7 @@ def main() -> None:
             "Python interpreter for Marcus subprocesses "
             "(default: current interpreter). "
             "Set this when Marcus lives in a different conda/venv env. "
-            "Example: --marcus-python /opt/anaconda3/envs/porch/bin/python"
+            'Example: --marcus-python "$(conda run -n <env> which python)"'
         ),
     )
     args = parser.parse_args()

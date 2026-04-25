@@ -219,15 +219,15 @@ Start Options:
   --templates-dir DIR    Path to Marcus experiment templates
   --marcus-python PATH   Python interpreter for Marcus subprocesses
                          (default: current interpreter). Set when Marcus
-                         is in a different conda/venv env.
-                         Example: --marcus-python /opt/anaconda3/envs/porch/bin/python
+                         is in a different conda/venv env. Get the path
+                         from: conda activate <env> && which python
   -f, --foreground       Run in foreground (not as daemon)
 
 Examples:
   ./pos start                              # Start on default port 8420
   ./pos start --port 9000                  # Start on custom port
   ./pos start -f                           # Run in foreground
-  ./pos start --marcus-python /opt/anaconda3/envs/porch/bin/python
+  ./pos start --marcus-python "\$(conda run -n porch which python)"
   ./pos restart                            # Restart the server
   ./pos status                             # Check what's running
   ./pos logs -n 50                         # View last 50 lines

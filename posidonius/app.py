@@ -155,6 +155,21 @@ def _start_marcus_instance(
         _log.info("Marcus port %d stderr → %s", instance.port, log_path)
 
     python = python_executable or sys.executable
+
+    # Validate the interpreter exists up front so the error message is
+    # clear instead of bubbling up as a generic FileNotFoundError from
+    # deep inside subprocess.Popen.
+    if not Path(python).is_file():
+        if stderr_fh is not None:
+            stderr_fh.close()
+        raise RuntimeError(
+            f"Marcus python interpreter not found: {python!r}. "
+            f"Pass --marcus-python <path> on './pos start' or set the "
+            f"MARCUS_PYTHON env var. Tip: get the path with "
+            f"`conda run -n <env> which python` or `which python` "
+            f"after activating the environment Marcus is installed in."
+        )
+
     try:
         proc: subprocess.Popen[bytes] = subprocess.Popen(
             [python, "-m", "src.marcus_mcp.server", "--http"],
