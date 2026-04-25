@@ -259,6 +259,27 @@ class TestMarcusInstanceEnvInjection:
             marcus_instance=marcus_instance,
         )
 
+    def _run_start_run_and_wait_for_popen(
+        self, pipeline: ExperimentPipeline, mock_popen: Mock, tmp_path: Path
+    ) -> None:
+        """Start a pipeline run and wait until Popen is actually called.
+
+        ``start_run`` spawns a daemon thread that calls Popen. Joining the
+        outer thread only waits for ``start_run`` to return, not for the
+        inner daemon thread to call Popen. Poll until the mock records the
+        call (or 5 s elapse) to avoid a race.
+        """
+        import threading
+        import time
+
+        t = threading.Thread(target=pipeline.start_run, args=(0,), daemon=True)
+        t.start()
+        t.join(timeout=3)
+        # Poll until the inner daemon thread calls Popen (should be <100 ms).
+        deadline = time.monotonic() + 5.0
+        while not mock_popen.called and time.monotonic() < deadline:
+            time.sleep(0.05)
+
     @patch("subprocess.Popen")
     @patch("posidonius.tracking.mlflow_tracker.MLflowTracker")
     def test_marcus_url_passed_to_popen(
@@ -278,13 +299,7 @@ class TestMarcusInstanceEnvInjection:
                 pipeline.runner, "get_tmux_session_name", return_value="sess"
             ):
                 with patch.object(pipeline.tmux, "session_exists", return_value=False):
-                    import threading
-
-                    t = threading.Thread(
-                        target=pipeline.start_run, args=(0,), daemon=True
-                    )
-                    t.start()
-                    t.join(timeout=3)
+                    self._run_start_run_and_wait_for_popen(pipeline, mock_popen, tmp_path)
 
         assert mock_popen.called
         call_kwargs = mock_popen.call_args[1]
@@ -310,13 +325,7 @@ class TestMarcusInstanceEnvInjection:
                 pipeline.runner, "get_tmux_session_name", return_value="sess"
             ):
                 with patch.object(pipeline.tmux, "session_exists", return_value=False):
-                    import threading
-
-                    t = threading.Thread(
-                        target=pipeline.start_run, args=(0,), daemon=True
-                    )
-                    t.start()
-                    t.join(timeout=3)
+                    self._run_start_run_and_wait_for_popen(pipeline, mock_popen, tmp_path)
 
         assert mock_popen.called
         call_kwargs = mock_popen.call_args[1]

@@ -203,18 +203,25 @@ class ExperimentPipeline:
             if "db_path" in self._marcus_instance:
                 run_env["SQLITE_KANBAN_DB_PATH"] = self._marcus_instance["db_path"]
 
+        # Redirect run_experiment.py output to a per-run log so any
+        # crash in spawn_agents.py (Phase 2 worker spawn, git worktree
+        # creation, etc.) is visible rather than silently swallowed.
+        spawn_log_path = run_dir / "logs" / "spawn.log"
+        spawn_log_path.parent.mkdir(parents=True, exist_ok=True)
+
         # Launch via subprocess to run_experiment.py, then auto-confirm
         # any trust prompts that appear in agent panes.
         def _launch_and_confirm_trust() -> None:
             try:
+                spawn_log = open(spawn_log_path, "w")  # noqa: SIM115
                 subprocess.Popen(  # nosec B603
                     [
                         self._python_executable,
                         str(self._run_experiment_script),
                         str(run_dir),
                     ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=spawn_log,
+                    stderr=spawn_log,
                     env=run_env,
                 )
             except OSError as e:
