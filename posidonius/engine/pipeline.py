@@ -219,6 +219,7 @@ class ExperimentPipeline:
                         self._python_executable,
                         str(self._run_experiment_script),
                         str(run_dir),
+                        "--epictetus",
                     ],
                     stdout=spawn_log,
                     stderr=spawn_log,
