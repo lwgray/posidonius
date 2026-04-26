@@ -112,6 +112,16 @@ class PipelineConfig(BaseModel):
     timeout_project_creation: int = 600
     timeout_agent_startup: int = 60
     auto_advance: bool = False
+    cpm_override: bool = False
+    """When False (default), exactly ``num_agents`` workers spawn — the
+    count specified in the config. When True, Marcus's CPM-derived
+    ``recommended_agents`` overrides the count.
+
+    Default OFF because controlled experiments use agent count as the
+    independent variable; letting Marcus right-size silently corrupts
+    the experimental design. Turn ON for production runs where Marcus
+    should size the pool to the actual work graph.
+    """
 
     @field_validator("complexity")
     @classmethod
@@ -125,7 +135,12 @@ class PipelineConfig(BaseModel):
 
 
 class MarcusInstance(BaseModel):
-    """Configuration for one parallel Marcus MCP instance.
+    """Configuration for one parallel experiment slot.
+
+    Combines the Marcus MCP server config with per-slot experiment
+    overrides.  Any override field set here takes precedence over the
+    base ``PipelineConfig`` in ``BatchParallelRequest``, allowing each
+    parallel slot to run a genuinely different experiment.
 
     Attributes
     ----------
@@ -134,24 +149,52 @@ class MarcusInstance(BaseModel):
     db_path : str | None
         SQLite DB path for this instance (sets SQLITE_KANBAN_DB_PATH).
     port : int | None
-        Port number (informational; URL is the authoritative endpoint).
+        Port number; used to auto-start a Marcus process if not already
+        running.
+    num_agents : int | None
+        Override agent count for this slot.  When set, replaces the
+        ``num_agents`` value in every run of the base pipeline config.
+    complexity : str | None
+        Override complexity level (``"prototype"`` / ``"standard"`` /
+        ``"enterprise"``) for this slot.
+    project_name : str | None
+        Override the Marcus project name for this slot (e.g.
+        ``"Weather Dashboard"``, ``"Snake Game"``).  Enables running
+        completely different projects in parallel.
+    project_spec : str | None
+        Override project specification text for this slot.  Enables
+        running completely different problems in parallel.
+    label : str | None
+        Human-readable label shown in the UI (e.g. ``"2-agent baseline"``).
+        Defaults to ``"{num_agents} agents"`` or the slot index.
     """
 
     url: str
     db_path: Optional[str] = None
     port: Optional[int] = None
+    # Per-slot experiment overrides
+    num_agents: Optional[int] = None
+    complexity: Optional[str] = None
+    project_name: Optional[str] = None
+    project_spec: Optional[str] = None
+    label: Optional[str] = None
 
 
 class BatchParallelRequest(BaseModel):
     """Request to launch N experiments in parallel across N Marcus instances.
 
+    Each slot in ``marcus_instances`` runs an independent experiment.
+    Override fields on each ``MarcusInstance`` (``num_agents``,
+    ``complexity``, ``project_spec``) are merged on top of
+    ``pipeline_config``, so slots can differ on any dimension while
+    sharing common defaults.
+
     Attributes
     ----------
     pipeline_config : PipelineConfig
-        Base pipeline config. Each parallel pipeline is a copy with a
-        unique name suffix (e.g. weather-dashboard-0, weather-dashboard-1).
+        Base pipeline config.  Provides defaults for every slot.
     marcus_instances : list[MarcusInstance]
-        One entry per parallel slot. Length determines N.
+        One entry per parallel slot.  Length determines N.
     """
 
     pipeline_config: PipelineConfig

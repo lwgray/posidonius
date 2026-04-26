@@ -16,6 +16,14 @@ class TmuxManager:
     requiring manual tmux attachment.
     """
 
+    def __init__(self) -> None:
+        # Role cache: pane target → detected role.
+        # Roles are permanent (creator/monitor/worker never changes mid-run),
+        # so we cache the first definitive detection. This prevents
+        # "EXPERIMENT MONITOR" from being missed once the startup header
+        # scrolls past the capture_pane tail buffer.
+        self._pane_roles: dict[str, str] = {}
+
     def capture_pane(self, target: str, lines: int = 50) -> str:
         """Capture recent output from a tmux pane.
 
@@ -112,18 +120,34 @@ class TmuxManager:
         Returns
         -------
         list[dict[str, Any]]
-            List of dicts with 'target', 'title', 'output', and 'status'.
+            List of dicts with 'target', 'title', 'output', 'status', and 'role'.
         """
         panes = self.list_panes(session_name)
         results: list[dict[str, Any]] = []
         for pane in panes:
             output = self.capture_pane(pane["target"])
+            target = pane["target"]
+
+            # Use cached role if already definitively identified.
+            # The startup header ("EXPERIMENT MONITOR", "PROJECT CREATOR AGENT")
+            # scrolls past the 50-line tail buffer after the experiment runs
+            # for a while. Once we detect a non-worker role, cache it
+            # permanently — roles never change mid-run.
+            cached = self._pane_roles.get(target)
+            if cached in ("creator", "monitor"):
+                role = cached
+            else:
+                role = self.detect_agent_role(output)
+                if role in ("creator", "monitor"):
+                    self._pane_roles[target] = role
+
             results.append(
                 {
-                    "target": pane["target"],
+                    "target": target,
                     "title": pane["title"],
                     "output": output,
                     "status": self.detect_agent_status(output),
+                    "role": role,
                 }
             )
         return results
@@ -268,6 +292,32 @@ class TmuxManager:
                 confirmed += 1
         return confirmed
 
+    def detect_agent_role(self, output: str) -> str:
+        """Detect agent role from pane output content.
+
+        Reads the script header echoed at startup by spawn_agents.py to
+        determine whether the pane is a creator, monitor, or worker.
+        This is more reliable than pane title since Claude's TUI may
+        reset the terminal title.
+
+        Parameters
+        ----------
+        output : str
+            Captured pane output.
+
+        Returns
+        -------
+        str
+            One of: 'creator', 'monitor', 'worker'.
+        """
+        # spawn_agents.py echoes these headers near the start of each script
+        head = output[:1000]
+        if "PROJECT CREATOR AGENT" in head:
+            return "creator"
+        if "EXPERIMENT MONITOR" in head:
+            return "monitor"
+        return "worker"
+
     def detect_agent_status(self, output: str) -> str:
         """Detect agent status from pane output.
 
@@ -287,26 +337,37 @@ class TmuxManager:
         if not output.strip():
             return "idle"
 
-        lower = output.lower()
-        last_chunk = lower[-500:] if len(lower) > 500 else lower
+        last_chunk = output[-600:] if len(output) > 600 else output
+        lower = last_chunk.lower()
 
-        if "work complete" in last_chunk or "complete" in last_chunk:
+        # Specific terminal markers from spawn_agents.py completion echoes
+        if (
+            "work complete" in lower
+            or "creator complete" in lower
+            or "monitor - complete" in lower
+        ):
             return "complete"
-        if "error" in last_chunk or "failed" in last_chunk:
-            return "error"
-        if "waiting" in last_chunk or "sleep" in last_chunk:
-            return "waiting"
+
+        # Error signals
         if any(
-            kw in last_chunk
-            for kw in [
-                "writing",
-                "working",
-                "task",
-                "creating",
-                "running",
-                "progress",
-                "commit",
-            ]
+            kw in lower
+            for kw in ["error:", "traceback (most recent", "exit code 1", "failed:"]
+        ):
+            return "error"
+
+        # Claude interactive-mode activity indicators
+        if "esc to interrupt" in lower or "tokens used" in lower:
+            return "working"
+
+        # Shell-level waiting signals
+        if "waiting for project" in lower or "waiting for" in lower:
+            return "waiting"
+
+        # Generic busy indicators (less reliable, checked after specific ones)
+        if any(
+            kw in lower
+            for kw in ["writing", "creating", "running", "updating", "committing"]
         ):
             return "working"
+
         return "idle"

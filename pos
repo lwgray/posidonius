@@ -22,6 +22,9 @@ HOST=${POSIDONIUS_HOST:-127.0.0.1}
 VENV_DIR="$SCRIPT_DIR/.venv"
 PID_FILE="/tmp/posidonius.pid"
 LOG_FILE="/tmp/posidonius.log"
+# Python interpreter for Marcus subprocesses — override if Marcus is in a
+# different conda/venv env. Can also pass --marcus-python on the command line.
+MARCUS_PYTHON=${MARCUS_PYTHON:-""}
 
 # Activate virtualenv
 activate_venv() {
@@ -59,8 +62,12 @@ start_server() {
 
     echo -e "${BLUE}Starting Posidonius...${NC}"
 
-    # Parse extra args
+    # Seed EXTRA_ARGS from env var; CLI flag overrides it below
     EXTRA_ARGS=""
+    if [ -n "$MARCUS_PYTHON" ]; then
+        EXTRA_ARGS="$EXTRA_ARGS --marcus-python $MARCUS_PYTHON"
+    fi
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --port)
@@ -77,6 +84,12 @@ start_server() {
                 ;;
             --templates-dir)
                 EXTRA_ARGS="$EXTRA_ARGS --templates-dir $2"
+                shift 2
+                ;;
+            --marcus-python)
+                # CLI flag overrides MARCUS_PYTHON env var
+                EXTRA_ARGS=$(echo "$EXTRA_ARGS" | sed 's/--marcus-python [^ ]*//g')
+                EXTRA_ARGS="$EXTRA_ARGS --marcus-python $2"
                 shift 2
                 ;;
             -f|--foreground)
@@ -204,16 +217,30 @@ Start Options:
   --host HOST            Host to bind to (default: 127.0.0.1, or \$POSIDONIUS_HOST)
   --experiments-dir DIR  Base directory for experiment output
   --templates-dir DIR    Path to Marcus experiment templates
+  --marcus-python PATH   Python interpreter for Marcus subprocesses
+                         (default: current interpreter). Required when
+                         Marcus is installed in a different env than
+                         Posidonius. See examples below.
   -f, --foreground       Run in foreground (not as daemon)
 
 Examples:
-  ./pos start                    # Start on default port 8420
-  ./pos start --port 9000        # Start on custom port
-  ./pos start -f                 # Run in foreground
-  ./pos restart                  # Restart the server
-  ./pos status                   # Check what's running
-  ./pos logs -n 50               # View last 50 lines
-  ./pos stop                     # Stop the server
+  ./pos start                              # Start on default port 8420
+  ./pos start --port 9000                  # Start on custom port
+  ./pos start -f                           # Run in foreground
+  ./pos restart                            # Restart the server
+  ./pos status                             # Check what's running
+  ./pos logs -n 50                         # View last 50 lines
+  ./pos stop                               # Stop the server
+
+  # --marcus-python: use the interpreter where Marcus is installed
+  # conda:
+  ./pos start --marcus-python "\$(conda run -n <env> which python)"
+  # venv / virtualenv:
+  ./pos start --marcus-python /path/to/marcus-venv/bin/python
+  # pyenv:
+  ./pos start --marcus-python "\$(pyenv which python)"
+  # system / PATH lookup (fish/zsh):
+  ./pos start --marcus-python "\$(which python)"
 
 EOF
 }

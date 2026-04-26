@@ -166,6 +166,12 @@ class ExperimentRunner:
                 "project_creation": self.pipeline.timeout_project_creation,
                 "agent_startup": self.pipeline.timeout_agent_startup,
             },
+            # CPM override: when False (default), spawn_agents.py uses
+            # the exact agent count configured. When True, Marcus's
+            # CPM-derived recommended_agents overrides. Off by default
+            # so controlled experiments preserve the agent-count
+            # independent variable.
+            "cpm_override": self.pipeline.cpm_override,
         }
 
     def write_config_yaml(self, run_dir: Path, config_dict: dict[str, Any]) -> Path:

@@ -280,3 +280,47 @@ class TestPipelineMLflowIntegration:
         pipeline.tracker = mock_tracker
         status = pipeline.get_status()
         assert status.mlflow_experiment_id == "exp_789"
+
+
+class TestEpictetusFlagInSubprocess:
+    """run_experiment.py must be invoked with --epictetus so the monitor
+    keeps the tmux session alive for the post-run Epictetus audit."""
+
+    @patch("posidonius.engine.pipeline.subprocess.Popen")
+    @patch("posidonius.engine.pipeline.MLflowTracker")
+    def test_start_run_passes_epictetus_flag(
+        self,
+        mock_tracker_cls: Mock,
+        mock_popen: Mock,
+        pipeline: ExperimentPipeline,
+    ) -> None:
+        """subprocess.Popen call must include --epictetus in argv.
+
+        Without --epictetus, spawn_agents.py monitor kills the tmux session
+        after a 60-second grace period — before Epictetus can finish its audit.
+        """
+        mock_tracker = MagicMock()
+        mock_tracker_cls.return_value = mock_tracker
+        mock_tracker.start_pipeline_run.return_value = None
+        mock_tracker.start_child_run.return_value = "run_id_123"
+        mock_popen.return_value = MagicMock()
+
+        # start_run spawns the subprocess in a thread; give it a moment to fire
+        import threading, time
+        launched = threading.Event()
+        original_popen = mock_popen.side_effect
+
+        def _capture(*args: object, **kwargs: object) -> MagicMock:
+            launched.set()
+            return MagicMock()
+
+        mock_popen.side_effect = _capture
+
+        pipeline.start_run(0)
+        launched.wait(timeout=5)
+
+        assert mock_popen.called, "subprocess.Popen was not called"
+        args = mock_popen.call_args[0][0]
+        assert "--epictetus" in args, (
+            f"--epictetus missing from subprocess args: {args}"
+        )

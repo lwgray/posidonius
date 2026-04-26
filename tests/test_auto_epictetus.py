@@ -44,111 +44,140 @@ def pipeline(sample_pipeline: PipelineConfig, tmp_path: Path) -> ExperimentPipel
     )
 
 
-class TestRunEpictetus:
-    """Tests for ExperimentPipeline._run_epictetus()."""
+def _mock_popen(returncode: int = 0) -> MagicMock:
+    """Build a mock Popen object with the given returncode."""
+    proc = MagicMock()
+    proc.returncode = returncode
+    proc.communicate.return_value = (b"", b"")
+    return proc
 
-    @patch("subprocess.run")
-    def test_epictetus_invokes_claude_with_skill(
-        self, mock_run: Mock, pipeline: ExperimentPipeline, tmp_path: Path
+
+class TestRunEpictetusSubprocessFallback:
+    """Tests for _run_epictetus_subprocess (no tmux session available)."""
+
+    @patch("subprocess.Popen")
+    def test_invokes_claude_with_print_flag(
+        self, mock_popen: Mock, pipeline: ExperimentPipeline, tmp_path: Path
     ) -> None:
-        """_run_epictetus must call claude CLI with /epictetus skill."""
+        """Fallback path must call claude --print with /epictetus skill input."""
         impl_dir = tmp_path / "run_0" / "implementation"
         impl_dir.mkdir(parents=True)
         pipeline._run_dirs[0] = tmp_path / "run_0"
-
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+        mock_popen.return_value = _mock_popen(returncode=0)
 
         pipeline._run_epictetus(0, tmux_session=None)
 
-        assert mock_run.called
-        cmd_args = mock_run.call_args[0][0]
-        assert cmd_args[0] == "claude"
-        assert "--print" in cmd_args or "--dangerously-skip-permissions" in cmd_args
+        assert mock_popen.called
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "claude"
+        assert "--print" in cmd
+        assert "--dangerously-skip-permissions" in cmd
 
-    @patch("subprocess.run")
-    def test_epictetus_passes_session_when_provided(
-        self, mock_run: Mock, pipeline: ExperimentPipeline, tmp_path: Path
+    @patch("subprocess.Popen")
+    def test_skill_input_contains_impl_dir(
+        self, mock_popen: Mock, pipeline: ExperimentPipeline, tmp_path: Path
     ) -> None:
-        """_run_epictetus must include --session in the Epictetus invocation."""
+        """Skill input piped to claude must reference the implementation dir."""
         impl_dir = tmp_path / "run_0" / "implementation"
         impl_dir.mkdir(parents=True)
         pipeline._run_dirs[0] = tmp_path / "run_0"
+        mock_popen.return_value = _mock_popen(returncode=0)
 
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+        pipeline._run_epictetus(0, tmux_session=None)
 
-        pipeline._run_epictetus(0, tmux_session="marcus_test_run_0")
+        stdin_bytes = mock_popen.return_value.communicate.call_args[1]["input"]
+        assert str(impl_dir).encode() in stdin_bytes
 
-        assert mock_run.called
-        call_kwargs = mock_run.call_args
-        # Session name should appear somewhere in the invocation
-        # (either as arg or stdin input)
-        all_text = str(call_kwargs)
-        assert "marcus_test_run_0" in all_text
-
-    @patch("subprocess.run")
-    def test_epictetus_skipped_when_no_impl_dir(
-        self, mock_run: Mock, pipeline: ExperimentPipeline, tmp_path: Path
+    @patch("subprocess.Popen")
+    def test_logs_complete_on_success(
+        self, mock_popen: Mock, pipeline: ExperimentPipeline, tmp_path: Path
     ) -> None:
-        """_run_epictetus must skip (log EPICTETUS_SKIPPED) if no implementation/ dir."""
-        # run_dir exists but no implementation/ subdirectory
-        run_dir = tmp_path / "run_0"
-        run_dir.mkdir(parents=True)
-        pipeline._run_dirs[0] = run_dir
-
-        pipeline._run_epictetus(0, tmux_session="marcus_test_run_0")
-
-        mock_run.assert_not_called()
-
-    @patch("subprocess.run")
-    def test_epictetus_skipped_when_no_run_dir(
-        self, mock_run: Mock, pipeline: ExperimentPipeline
-    ) -> None:
-        """_run_epictetus must skip gracefully if run dir not tracked."""
-        pipeline._run_epictetus(0, tmux_session="marcus_test_run_0")
-
-        mock_run.assert_not_called()
-
-    @patch("subprocess.run")
-    def test_epictetus_logs_complete_on_success(
-        self, mock_run: Mock, pipeline: ExperimentPipeline, tmp_path: Path
-    ) -> None:
-        """_run_epictetus must log EPICTETUS_COMPLETE when returncode == 0."""
+        """Must log EPICTETUS_COMPLETE when subprocess exits 0."""
         impl_dir = tmp_path / "run_0" / "implementation"
         impl_dir.mkdir(parents=True)
         pipeline._run_dirs[0] = tmp_path / "run_0"
-
-        mock_run.return_value = Mock(returncode=0, stdout="done", stderr="")
+        mock_popen.return_value = _mock_popen(returncode=0)
 
         with patch.object(pipeline.events, "log") as mock_log:
             pipeline._run_epictetus(0, tmux_session=None)
             log_calls = [c[0][0] for c in mock_log.call_args_list]
             assert "EPICTETUS_COMPLETE" in log_calls
 
-    @patch("subprocess.run")
-    def test_epictetus_logs_failed_on_nonzero_returncode(
-        self, mock_run: Mock, pipeline: ExperimentPipeline, tmp_path: Path
+    @patch("subprocess.Popen")
+    def test_logs_failed_on_nonzero_returncode(
+        self, mock_popen: Mock, pipeline: ExperimentPipeline, tmp_path: Path
     ) -> None:
-        """_run_epictetus must log EPICTETUS_FAILED when subprocess fails."""
+        """Must log EPICTETUS_FAILED when subprocess exits non-zero."""
         impl_dir = tmp_path / "run_0" / "implementation"
         impl_dir.mkdir(parents=True)
         pipeline._run_dirs[0] = tmp_path / "run_0"
-
-        mock_run.return_value = Mock(returncode=1, stdout="", stderr="audit failed")
+        mock_popen.return_value = _mock_popen(returncode=1)
 
         with patch.object(pipeline.events, "log") as mock_log:
             pipeline._run_epictetus(0, tmux_session=None)
             log_calls = [c[0][0] for c in mock_log.call_args_list]
             assert "EPICTETUS_FAILED" in log_calls
 
+    @patch("subprocess.Popen")
+    def test_skipped_when_no_impl_dir(
+        self, mock_popen: Mock, pipeline: ExperimentPipeline, tmp_path: Path
+    ) -> None:
+        """Must skip without any subprocess call if implementation/ missing."""
+        run_dir = tmp_path / "run_0"
+        run_dir.mkdir(parents=True)
+        pipeline._run_dirs[0] = run_dir
+
+        pipeline._run_epictetus(0, tmux_session=None)
+
+        mock_popen.assert_not_called()
+
+    @patch("subprocess.Popen")
+    def test_skipped_when_no_run_dir(
+        self, mock_popen: Mock, pipeline: ExperimentPipeline
+    ) -> None:
+        """Must skip gracefully if run dir not tracked at all."""
+        pipeline._run_epictetus(0, tmux_session=None)
+
+        mock_popen.assert_not_called()
+
+
+class TestRunEpictetusPassesSession:
+    """Session name must reach the skill input in the tmux path."""
+
+    @patch("subprocess.Popen")
+    @patch("subprocess.run")
+    def test_session_name_in_skill_input(
+        self,
+        mock_run: Mock,
+        mock_popen: Mock,
+        pipeline: ExperimentPipeline,
+        tmp_path: Path,
+    ) -> None:
+        """--session flag must appear in the /epictetus skill input string."""
+        impl_dir = tmp_path / "run_0" / "implementation"
+        impl_dir.mkdir(parents=True)
+        pipeline._run_dirs[0] = tmp_path / "run_0"
+
+        # session_exists → False so we fall straight to subprocess fallback
+        mock_run.return_value = Mock(returncode=1, stdout="", stderr="")
+        mock_popen.return_value = _mock_popen(returncode=0)
+
+        pipeline._run_epictetus(0, tmux_session="marcus_test_run_0")
+
+        stdin_bytes = mock_popen.return_value.communicate.call_args[1]["input"]
+        assert b"marcus_test_run_0" in stdin_bytes
+
 
 class TestEpictetusRunsBeforeTeardown:
     """Epictetus must fire before teardown so tmux session is still alive."""
 
     @patch("posidonius.engine.tmux.TmuxManager.kill_session")
+    @patch("subprocess.Popen")
     @patch("subprocess.run")
     def test_epictetus_called_before_teardown_kill(
         self,
-        mock_subprocess: Mock,
+        mock_run: Mock,
+        mock_popen: Mock,
         mock_kill: Mock,
         pipeline: ExperimentPipeline,
         tmp_path: Path,
@@ -160,18 +189,19 @@ class TestEpictetusRunsBeforeTeardown:
         pipeline._run_start_times[0] = 0.0
         pipeline.run_statuses[0] = {"status": ExperimentStatus.RUNNING, "num_agents": 2}
 
-        mock_subprocess.return_value = Mock(returncode=0, stdout="", stderr="")
+        # session_exists returns False → falls to Popen subprocess path
+        mock_run.return_value = Mock(returncode=1, stdout="", stderr="")
 
         call_order: list[str] = []
 
-        def record_subprocess(*args: object, **kwargs: object) -> Mock:
+        def record_popen(*args: object, **kwargs: object) -> MagicMock:
             call_order.append("epictetus")
-            return Mock(returncode=0, stdout="", stderr="")
+            return _mock_popen(returncode=0)
 
         def record_kill(session: str) -> None:
             call_order.append("kill")
 
-        mock_subprocess.side_effect = record_subprocess
+        mock_popen.side_effect = record_popen
         mock_kill.side_effect = record_kill
 
         pipeline._run_epictetus(0, tmux_session="marcus_test_run_0")
@@ -182,10 +212,12 @@ class TestEpictetusRunsBeforeTeardown:
         ), "Epictetus must run before tmux kill — it needs the live session"
 
     @patch("posidonius.engine.tmux.TmuxManager.kill_session")
+    @patch("subprocess.Popen")
     @patch("subprocess.run")
     def test_teardown_still_runs_if_epictetus_fails(
         self,
-        mock_subprocess: Mock,
+        mock_run: Mock,
+        mock_popen: Mock,
         mock_kill: Mock,
         pipeline: ExperimentPipeline,
         tmp_path: Path,
@@ -197,8 +229,9 @@ class TestEpictetusRunsBeforeTeardown:
         pipeline._run_start_times[0] = 0.0
         pipeline.run_statuses[0] = {"status": ExperimentStatus.RUNNING, "num_agents": 2}
 
-        # Epictetus fails with non-zero returncode
-        mock_subprocess.return_value = Mock(returncode=1, stdout="", stderr="error")
+        # session_exists returns False → Popen path; Popen exits non-zero
+        mock_run.return_value = Mock(returncode=1, stdout="", stderr="")
+        mock_popen.return_value = _mock_popen(returncode=1)
 
         pipeline._run_epictetus(0, tmux_session="marcus_test_run_0")
         pipeline.teardown_run(0, "marcus_test_run_0")

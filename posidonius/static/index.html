@@ -239,6 +239,7 @@
 
     <div class="tabs">
         <button class="tab active" data-tab="new">New Experiment</button>
+        <button class="tab" data-tab="batch">Batch</button>
         <button class="tab" data-tab="running">Running</button>
         <button class="tab" data-tab="optimize">Optimize</button>
         <button class="tab" data-tab="history">History</button>
@@ -298,12 +299,106 @@
                         <label>Project Timeout (s)</label>
                         <input type="number" id="timeout" value="300" min="60">
                     </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:8px;margin:0;cursor:pointer">
+                            <input type="checkbox" id="cpm-override" style="width:auto;margin:0">
+                            <span>Use CPM-recommended agent count (override config)</span>
+                        </label>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;margin-left:24px">
+                            OFF (default): spawn exactly the number of agents specified per run.
+                            ON: let Marcus's CPM analysis right-size the agent pool.
+                            Keep OFF for controlled experiments where agent count is the variable.
+                        </div>
+                    </div>
                 </div>
             </details>
             <div class="btn-group">
                 <button type="submit" class="btn btn-success">Run Experiment</button>
             </div>
         </form>
+    </div>
+
+    <!-- BATCH PARALLEL -->
+    <div id="tab-batch" class="tab-content">
+        <p style="color:var(--text-muted);font-size:0.82rem;margin:0 0 14px">
+            Run multiple different experiments simultaneously. Each slot can vary agent count,
+            complexity, or even the project spec — results land in Cato for comparison.
+        </p>
+        <form id="batch-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Experiment Base Name</label>
+                    <input type="text" id="batch-name" placeholder="e.g., weather-exp" value="exp" required>
+                </div>
+                <div class="form-group">
+                    <label>Project Name</label>
+                    <input type="text" id="batch-project-name" placeholder="(auto from base name)" value="">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Default Project Specification <span style="color:var(--text-muted);font-weight:400">(per-slot overrides below)</span></label>
+                <textarea id="batch-spec" placeholder="Describe what to build — slots can override this individually..." required></textarea>
+            </div>
+            <div class="form-row-3">
+                <div class="form-group">
+                    <label>Default Complexity</label>
+                    <select id="batch-complexity">
+                        <option value="prototype" selected>Prototype</option>
+                        <option value="standard">Standard</option>
+                        <option value="enterprise">Enterprise</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Default Agents</label>
+                    <input type="number" id="batch-default-agents" value="2" min="1" max="20" style="width:100%">
+                </div>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:8px;margin:0;cursor:pointer">
+                    <input type="checkbox" id="batch-cpm-override" style="width:auto;margin:0">
+                    <span>Use CPM-recommended agent count (override per-slot agent settings)</span>
+                </label>
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;margin-left:24px">
+                    OFF (default): each slot spawns exactly the number of agents it specifies.
+                    ON: Marcus's CPM analysis right-sizes each slot's pool, ignoring the per-slot Agents column.
+                    Keep OFF for controlled experiments where agent count is the variable.
+                </div>
+            </div>
+
+            <div style="margin-top:16px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                    <label style="margin:0">
+                        Experiment Slots
+                        <span style="color:var(--text-muted);font-size:0.72rem;font-weight:400"> — each runs in parallel on its own Marcus instance</span>
+                    </label>
+                    <div style="display:flex;gap:6px">
+                        <button type="button" class="btn btn-secondary btn-sm" id="batch-scaling-series">Scaling series</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="batch-add-instance">+ Add slot</button>
+                    </div>
+                </div>
+                <!-- Column headers -->
+                <div style="display:grid;grid-template-columns:80px 60px 90px 150px 150px 80px 32px;gap:5px;
+                            font-size:0.68rem;color:var(--text-muted);padding:0 2px;margin-bottom:4px;align-items:center">
+                    <span>Label</span>
+                    <span>Agents</span>
+                    <span>Complexity</span>
+                    <span>MCP URL</span>
+                    <span>DB path</span>
+                    <span>Port</span>
+                    <span></span>
+                </div>
+                <div id="batch-instances-list"></div>
+                <div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px">
+                    Blank agent/complexity/spec fields inherit the defaults above.
+                    Posidonius auto-starts Marcus for each slot that has a port set.
+                </div>
+            </div>
+
+            <div class="btn-group">
+                <button type="submit" class="btn btn-success" id="batch-submit-btn">Launch Batch</button>
+            </div>
+        </form>
+        <div id="batch-result"></div>
     </div>
 
     <!-- RUNNING EXPERIMENTS -->
@@ -413,6 +508,7 @@ function buildPayload() {
         default_skills: Array.from(selectedSkills),
         timeout_project_creation: parseInt(document.getElementById('timeout').value),
         runs: runs.map(r => ({num_agents: r.num_agents, subagents_per_agent: r.subagents})),
+        cpm_override: document.getElementById('cpm-override').checked,
     };
 }
 
@@ -511,6 +607,8 @@ async function refreshExperiments() {
                 }
 
                 // Buttons — include pause for running experiments
+                const isFailed = exp.status === 'failed';
+                const isStopped = exp.status === 'stopped';
                 let buttons = '';
                 if (tmux) buttons += `<button class="btn btn-secondary btn-sm" onclick="copyTmux('${tmux}')">tmux attach</button>`;
                 if (isRunning) buttons += `<button class="btn btn-secondary btn-sm" onclick="window.location.href='/api/experiments/${exp.pipeline_name}/export'">Export</button>`;
@@ -520,6 +618,7 @@ async function refreshExperiments() {
                     <button class="btn btn-secondary btn-sm" id="pause-btn-${exp.pipeline_name}" onclick="togglePause('${exp.pipeline_name}')">⏸ Pause</button>
                     <button class="btn btn-danger btn-sm" onclick="stopExp('${exp.pipeline_name}')">Stop</button>`;
                 if (isCompleted) buttons += `<span style="color:var(--green)">✓ DONE</span>`;
+                if (isFailed || isStopped) buttons += `<button class="btn btn-secondary btn-sm" onclick="dismissExp('${exp.pipeline_name}')">Dismiss</button>`;
 
                 html += `<div class="exp-card" id="card-${exp.pipeline_name}">
                     <div class="exp-header">
@@ -555,60 +654,80 @@ async function refreshExperiments() {
 // Terminal management
 let activeTerminals = {}; // name -> {paneIndex -> {term, ws, fitAddon}}
 
+function _paneRole(p) {
+    // Use backend-detected role (content-based, reliable even if tmux title resets)
+    const role = p.role || '';
+    if (role === 'creator') return 'creator';
+    if (role === 'monitor') return 'monitor';
+    return 'worker';
+}
+
 async function fetchPanesAndRenderTerminals(name) {
     try {
         const resp = await fetch(`/api/experiments/${name}/output`);
         if (!resp.ok) return;
         const panes = await resp.json();
 
-        // Agent summary lines (status card)
-        // Derive clean names from pane title + role detection
+        // Agent summary lines (status card) — rebuilt on every poll for live status
         const agentContainer = document.getElementById('agents-' + name);
         if (agentContainer) {
             let workerNum = 0;
-            agentContainer.innerHTML = panes.map((p, i) => {
-                const raw = (p.title || '').toLowerCase();
-                const isMonitor = raw.includes('monitor');
-                const isCreator = raw.includes('creator') || raw.includes('project') || (i === 0 && !raw.includes('unicorn') && !raw.includes('monitor'));
-                const isWorker = !isMonitor && !isCreator;
+            agentContainer.innerHTML = panes.map((p) => {
+                const role = _paneRole(p);
+                const isMonitor = role === 'monitor';
+                const isCreator = role === 'creator';
 
-                let displayName, role, dotColor;
+                let displayName, icon, dotColor;
                 if (isMonitor) {
                     displayName = 'Monitor';
-                    role = '📊';
-                    dotColor = p.status === 'running' ? 'yellow' : 'gray';
+                    icon = '📊';
+                    dotColor = p.status === 'working' ? 'yellow' : p.status === 'complete' ? 'green' : 'gray';
                 } else if (isCreator) {
                     displayName = 'Project Creator';
-                    role = '📋';
-                    dotColor = p.status === 'running' ? 'yellow' : 'gray';
+                    icon = '📋';
+                    dotColor = p.status === 'working' ? 'yellow' : p.status === 'complete' ? 'green' : 'gray';
                 } else {
                     workerNum++;
-                    displayName = `Worker ${workerNum}`;
-                    role = '🔧';
-                    dotColor = p.status === 'running' ? 'green' : p.status === 'exited' ? 'gray' : 'yellow';
+                    // Always use stable "Agent N" — pane titles get
+                    // overwritten by Claude Code's terminal-title
+                    // escape sequences (showing whatever task it's on),
+                    // making them unstable identifiers.
+                    displayName = `Agent ${workerNum}`;
+                    icon = '🔧';
+                    dotColor = p.status === 'working' ? 'green' : p.status === 'complete' ? 'green' : p.status === 'waiting' ? 'yellow' : 'gray';
                 }
 
+                const statusLabel = p.status || 'idle';
                 return `<div class="agent-summary">
                     <span class="agent-dot agent-dot-${dotColor}"></span>
-                    <span class="agent-summary-name">${role} ${displayName}</span>
-                    <span class="agent-summary-task">${p.status === 'running' ? 'active' : p.status}</span>
+                    <span class="agent-summary-name">${icon} ${displayName}</span>
+                    <span class="agent-summary-task badge badge-${statusLabel}">${statusLabel}</span>
                 </div>`;
             }).join('');
         }
 
-        // Tabbed terminal section (only create once)
+        // Tabbed terminal section — rebuild whenever pane count changes
+        // (handles case where tmux session wasn't ready on the first poll)
         const termSection = document.getElementById('term-section-' + name);
-        if (termSection && !activeTerminals[name]) {
-            activeTerminals[name] = {};
+        const prevPaneCount = activeTerminals[name]?._paneCount ?? 0;
+        if (termSection && panes.length > 0 && panes.length !== prevPaneCount) {
+            // Tear down any existing connections
+            if (activeTerminals[name]) {
+                Object.entries(activeTerminals[name]).forEach(([k, t]) => {
+                    if (k === '_paneCount') return;
+                    if (t?.ws) t.ws.close();
+                    if (t?.term) t.term.dispose();
+                });
+            }
+            activeTerminals[name] = {_paneCount: panes.length};
+
             let tabWorkerNum = 0;
             const tabs = panes.map((p, i) => {
-                const raw = (p.title || '').toLowerCase();
-                const isMon = raw.includes('monitor');
-                const isCre = raw.includes('creator') || raw.includes('project') || (i === 0 && !raw.includes('unicorn') && !raw.includes('monitor'));
+                const role = _paneRole(p);
                 let label;
-                if (isMon) label = '📊 Monitor';
-                else if (isCre) label = '📋 Creator';
-                else { tabWorkerNum++; label = `🔧 Worker ${tabWorkerNum}`; }
+                if (role === 'monitor') label = '📊 Monitor';
+                else if (role === 'creator') label = '📋 Creator';
+                else { tabWorkerNum++; label = `🔧 Agent ${tabWorkerNum}`; }
                 return `<button class="term-tab${i===0?' active':''}" onclick="switchTab('${name}',${i})">${label}</button>`;
             }).join('');
 
@@ -770,6 +889,14 @@ async function stopExp(name) {
         const resp = await fetch(`/api/experiments/${name}`, {method:'DELETE'});
         if (resp.ok) { showToast('Stopped','success'); refreshExperiments(); }
         else { showToast('Failed to stop','error'); }
+    } catch (err) { showToast(err.message,'error'); }
+}
+
+async function dismissExp(name) {
+    try {
+        const resp = await fetch(`/api/experiments/${name}/dismiss`, {method:'DELETE'});
+        if (resp.ok) { showToast(`"${name}" dismissed`,'success'); refreshExperiments(); }
+        else { showToast('Failed to dismiss','error'); }
     } catch (err) { showToast(err.message,'error'); }
 }
 
@@ -983,15 +1110,251 @@ async function fetchTaskMetrics(name) {
             <span class="ts-sep">·</span>
             <span class="ts-stat ts-done"><strong>${m.pct}%</strong></span>
             <span class="ts-sep">·</span>
-            <span class="ts-stat ts-agents"><strong>${m.active_agents}</strong> agents</span>
+            <span class="ts-stat ts-agents"><strong>${m.active_agents}</strong> active</span>
             ${blockerHtml}
         `;
     } catch (e) { el.innerHTML = ''; }
 }
 
+// ---------------------------------------------------------------------------
+// Batch tab — per-slot experiment overrides
+// ---------------------------------------------------------------------------
+
+// Each slot: url, db_path, port, num_agents (null=inherit), complexity (null=inherit),
+//            project_spec (null=inherit), label (null=auto)
+let batchInstances = [
+    {url:'http://localhost:4299/mcp', db_path:'./data/exp_0.db', port:4299, num_agents:2, complexity:null, project_name:null, project_spec:null, label:'2-agent'},
+    {url:'http://localhost:4300/mcp', db_path:'./data/exp_1.db', port:4300, num_agents:3, complexity:null, project_name:null, project_spec:null, label:'3-agent'},
+    {url:'http://localhost:4301/mcp', db_path:'./data/exp_2.db', port:4301, num_agents:5, complexity:null, project_name:null, project_spec:null, label:'5-agent'},
+];
+
+const COMPLEXITY_OPTIONS = ['prototype','standard','enterprise'];
+
+function _batchInput(style, val, placeholder, onchange) {
+    return `<input type="text" value="${escapeHtml(val||'')}" placeholder="${placeholder}"
+                   onchange="${onchange}"
+                   style="width:100%;padding:3px 5px;font-size:0.78rem;
+                          background:var(--card);border:1px solid var(--border);
+                          border-radius:4px;color:var(--text);${style}">`;
+}
+
+function renderBatchInstances() {
+    document.getElementById('batch-instances-list').innerHTML = batchInstances.map((inst, i) => {
+        const complexitySelect = `<select onchange="batchInstances[${i}].complexity=this.value||null"
+            style="width:100%;padding:3px 5px;font-size:0.78rem;background:var(--card);
+                   border:1px solid var(--border);border-radius:4px;color:var(--text)">
+            <option value="">— inherit —</option>
+            ${COMPLEXITY_OPTIONS.map(c =>
+                `<option value="${c}"${inst.complexity===c?' selected':''}>${c}</option>`
+            ).join('')}
+        </select>`;
+
+        return `<div style="display:grid;grid-template-columns:80px 60px 90px 150px 150px 80px 32px;
+                            gap:5px;margin-bottom:5px;align-items:center">
+            ${_batchInput('font-family:monospace', inst.label, 'label',
+                `batchInstances[${i}].label=this.value||null`)}
+            <input type="number" value="${inst.num_agents||''}" placeholder="inherit" min="1" max="50"
+                   onchange="batchInstances[${i}].num_agents=parseInt(this.value)||null"
+                   style="width:100%;padding:3px 5px;font-size:0.78rem;background:var(--card);
+                          border:1px solid var(--border);border-radius:4px;color:var(--text)">
+            ${complexitySelect}
+            ${_batchInput('font-family:monospace;font-size:0.72rem', inst.url,
+                'http://localhost:4299/mcp', `batchInstances[${i}].url=this.value`)}
+            ${_batchInput('font-family:monospace;font-size:0.72rem', inst.db_path,
+                './data/exp_${i}.db', `batchInstances[${i}].db_path=this.value||null`)}
+            <input type="number" value="${inst.port||''}" placeholder="port" min="1024" max="65535"
+                   onchange="batchInstances[${i}].port=parseInt(this.value)||null"
+                   style="width:100%;padding:3px 5px;font-size:0.78rem;background:var(--card);
+                          border:1px solid var(--border);border-radius:4px;color:var(--text)">
+            <button class="run-remove"
+                    onclick="batchInstances.length>1&&(batchInstances.splice(${i},1),renderBatchInstances())">&times;</button>
+        </div>
+        ${inst.project_spec !== null ? `
+        <div style="margin-bottom:4px;display:flex;gap:5px;align-items:center">
+            <span style="font-size:0.68rem;color:var(--text-muted);white-space:nowrap;width:80px">project name:</span>
+            <input type="text" value="${escapeHtml(inst.project_name||'')}"
+                   placeholder="e.g. Weather Dashboard"
+                   onchange="batchInstances[${i}].project_name=this.value||null"
+                   style="flex:1;font-size:0.78rem;padding:3px 6px;background:var(--card);
+                          border:1px solid var(--accent);border-radius:4px;color:var(--text)">
+        </div>
+        <div style="margin-bottom:6px;display:flex;gap:5px;align-items:flex-start">
+            <span style="font-size:0.68rem;color:var(--text-muted);padding-top:5px;white-space:nowrap;width:80px">spec:</span>
+            <textarea rows="2" onchange="batchInstances[${i}].project_spec=this.value||null"
+                      style="flex:1;font-size:0.75rem;padding:4px 6px;background:var(--card);
+                             border:1px solid var(--accent);border-radius:4px;color:var(--text);resize:vertical"
+                      placeholder="Leave blank to use default spec">${escapeHtml(inst.project_spec||'')}</textarea>
+            <button type="button" class="run-remove" title="Remove project override"
+                    onclick="batchInstances[${i}].project_spec=null;batchInstances[${i}].project_name=null;renderBatchInstances()">×</button>
+        </div>` : `
+        <div style="margin-bottom:6px;text-align:right">
+            <button type="button" style="font-size:0.68rem;color:var(--accent);background:none;border:none;cursor:pointer;padding:0"
+                    onclick="batchInstances[${i}].project_spec='';batchInstances[${i}].project_name='';renderBatchInstances()">
+                + set project name &amp; spec for this slot
+            </button>
+        </div>`}`;
+    }).join('');
+}
+
+document.getElementById('batch-add-instance').addEventListener('click', () => {
+    const last = batchInstances[batchInstances.length - 1];
+    const nextPort = (last.port || 4298) + 1;
+    const idx = batchInstances.length;
+    batchInstances.push({
+        url: `http://localhost:${nextPort}/mcp`,
+        db_path: `./data/exp_${idx}.db`,
+        port: nextPort,
+        num_agents: null,
+        complexity: null,
+        project_name: null,
+        project_spec: null,
+        label: null,
+    });
+    renderBatchInstances();
+});
+
+// Auto-generate a standard scaling series: 1, 2, 3, 5, 8
+document.getElementById('batch-scaling-series').addEventListener('click', () => {
+    const agents = [1, 2, 3, 5, 8];
+    batchInstances = agents.map((n, i) => ({
+        url: `http://localhost:${4299 + i}/mcp`,
+        db_path: `./data/exp_${i}.db`,
+        port: 4299 + i,
+        num_agents: n,
+        complexity: null,
+        project_name: null,
+        project_spec: null,
+        label: `${n}-agent`,
+    }));
+    renderBatchInstances();
+});
+
+document.getElementById('batch-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('batch-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+
+    const name = document.getElementById('batch-name').value.trim();
+    const projName = document.getElementById('batch-project-name').value.trim();
+    const defaultAgents = parseInt(document.getElementById('batch-default-agents').value) || 2;
+    const defaultComplexity = document.getElementById('batch-complexity').value;
+    const defaultSpec = document.getElementById('batch-spec').value;
+    const resultDiv = document.getElementById('batch-result');
+
+    const cpmOverride = document.getElementById('batch-cpm-override').checked;
+    const payload = {
+        pipeline_config: {
+            name,
+            project_name: projName || name,
+            project_spec: defaultSpec,
+            complexity: defaultComplexity,
+            provider: 'sqlite',
+            mode: 'new_project',
+            runs: [{num_agents: defaultAgents}],
+            cpm_override: cpmOverride,
+        },
+        marcus_instances: batchInstances.map(inst => ({
+            url: inst.url,
+            db_path: inst.db_path || null,
+            port: inst.port || null,
+            num_agents: inst.num_agents || null,
+            complexity: inst.complexity || null,
+            project_name: inst.project_name || null,
+            project_spec: inst.project_spec || null,
+            label: inst.label || null,
+        })),
+    };
+
+    const slotCount = batchInstances.length;
+    resultDiv.innerHTML = `
+        <div style="color:var(--text-muted);margin-top:12px;font-size:0.85rem">
+            Starting ${slotCount} Marcus instance(s) and creating pipelines…
+        </div>`;
+
+    try {
+        const resp = await fetch('/api/experiments/batch-parallel', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            showToast(err.detail || 'Batch creation failed', 'error');
+            resultDiv.innerHTML = '';
+            btn.disabled = false;
+            btn.textContent = 'Launch Batch';
+            return;
+        }
+
+        const data = await resp.json();
+
+        resultDiv.innerHTML = `
+            <div style="color:var(--text-muted);margin-top:12px;font-size:0.85rem">
+                Created ${data.total} pipelines — starting…
+            </div>`;
+
+        let started = 0;
+        for (const p of data.pipelines) {
+            const startResp = await fetch(
+                `/api/experiments/${p.pipeline_name}/start-all`, {method: 'POST'}
+            );
+            if (startResp.ok) started++;
+            else {
+                const err = await startResp.json();
+                showToast(`${p.pipeline_name}: ${err.detail || 'start failed'}`, 'error');
+            }
+        }
+
+        showToast(`${data.total} experiments launched (${started} started)`, 'success');
+
+        resultDiv.innerHTML = `
+            <div class="exp-card" style="margin-top:12px">
+                <strong style="color:var(--green)">${data.total} parallel experiments launched</strong>
+                <table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:0.78rem">
+                    <thead>
+                        <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
+                            <th style="padding:4px 6px">Pipeline</th>
+                            <th style="padding:4px 6px">Agents</th>
+                            <th style="padding:4px 6px">Complexity</th>
+                            <th style="padding:4px 6px">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.pipelines.map(p => {
+                            const ov = p.overrides || {};
+                            return `<tr style="border-bottom:1px solid var(--border)">
+                                <td style="padding:4px 6px;font-family:monospace">${escapeHtml(p.pipeline_name)}</td>
+                                <td style="padding:4px 6px">${ov.num_agents != null ? ov.num_agents : defaultAgents}</td>
+                                <td style="padding:4px 6px">${ov.complexity || defaultComplexity}</td>
+                                <td style="padding:4px 6px"><span class="badge badge-${p.status}">${p.status}</span></td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+                <div class="btn-group" style="margin-top:10px">
+                    <button class="btn btn-secondary btn-sm"
+                            onclick="document.querySelector('[data-tab=running]').click()">
+                        View in Running tab →
+                    </button>
+                </div>
+            </div>`;
+
+        setTimeout(() => document.querySelector('[data-tab="running"]').click(), 2000);
+    } catch (err) {
+        showToast('Network error: ' + err.message, 'error');
+        resultDiv.innerHTML = '';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Launch Batch';
+    }
+});
+
 // Init
 renderSkills();
 renderRuns();
+renderBatchInstances();
 </script>
 </body>
 </html>
